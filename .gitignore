@@ -1,0 +1,12 @@
+# Ignorar o executável final
+bin/compilador
+
+# Ignorar os arquivos C/C++ gerados automaticamente pelo Flex e Bison
+src/*.tab.c
+src/*.tab.h
+src/lex.yy.c
+
+# Ignorar arquivos de cache e do sistema operacional
+*.o
+*.out
+.vscode/

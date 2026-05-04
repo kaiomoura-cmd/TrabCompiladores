@@ -1,0 +1,10 @@
+int a;
+float b;
+bool c;
+char d;
+
+a = 1 + 2 * 3;
+b = a + 2.5;
+a = (int) 4.8 / 2;
+c = a > 5 && b <= 10.0;
+d = 'x';
