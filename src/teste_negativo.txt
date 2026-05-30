@@ -1,0 +1,9 @@
+int a;
+float b;
+bool c;
+
+a = -10;
+b = -3.14;
+
+/* E para provar que a tipagem forte funciona: */
+c = -true;

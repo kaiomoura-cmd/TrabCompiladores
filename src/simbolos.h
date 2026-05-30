@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <stdexcept>
+# include <vector>
 
 // Tipos suportados pelo C--
 enum class Tipo {
@@ -23,22 +24,20 @@ std::string tipoParaString(Tipo t);
 
 class TabelaDeSimbolos {
 public:
-    // Insere uma variável na tabela e lança std::runtime_error se a variável já foi declarada.
+    TabelaDeSimbolos();
+
+    // Métodos de Controle de Escopo
+    void entrarEscopo();
+    void sairEscopo();
 
     void inserir(const std::string& nome, Tipo tipo);
-
-    // Retorna o tipo de uma variável lança std::runtime_error se a variável não foi declarada.
- 
     Tipo buscar(const std::string& nome) const;
-
-    // Retorna true se a variável já existe na tabela.
     bool existe(const std::string& nome) const;
-
-    // Imprime todas as entradas da tabela.
     void imprimir() const;
 
 private:
-    std::unordered_map<std::string, Tipo> tabela;
+    // Pilha de tabelas
+    std::vector<std::unordered_map<std::string, Tipo>> pilha_tabelas;
 };
 
 #endif 

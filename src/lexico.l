@@ -20,8 +20,8 @@ char* copia_string_lex(const char* texto) {
 "float"                { return T_FLOAT; }
 "bool"                 { return T_BOOL; }
 "char"                 { return T_CHAR; }
-"true"                 { yylval.str = copia_string_lex("1"); return NUM_INTEIRO; }
-"false"                { yylval.str = copia_string_lex("0"); return NUM_INTEIRO; }
+"true"                 { yylval.str = copia_string_lex("1"); return TRUE; }
+"false"                { yylval.str = copia_string_lex("0"); return FALSE; }
 \'[a-zA-Z0-9]\'        { yylval.str = copia_string_lex(yytext); return LITERAL_CHAR; }
 [a-zA-Z_][a-zA-Z0-9_]* { yylval.str = copia_string_lex(yytext); return ID; }
 
@@ -42,6 +42,8 @@ char* copia_string_lex(const char* texto) {
 "="                    { return ATRIB; }
 "("                    { return ABRE_PAR; }
 ")"                    { return FECHA_PAR; }
+"{"                    { return '{'; }
+"}"                    { return '}'; }
 ";"                    { return ';'; }
 
 [ \t\n\r]+             {}

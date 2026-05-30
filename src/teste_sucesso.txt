@@ -1,0 +1,12 @@
+int a;
+float b;
+bool c;
+char d;
+
+a = 10;
+c = true;
+d = 'x';
+
+a = (int) 3.14; 
+b = a; 
+b = a + 2.5;
