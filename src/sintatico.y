@@ -64,10 +64,22 @@ programa:
     ;
 
 comando: 
-    T_INT ID ';' { tabela.inserir(std::string($2), Tipo::INT); }
-    | T_FLOAT ID ';' { tabela.inserir(std::string($2), Tipo::FLOAT); }
-    | T_BOOL ID ';' { tabela.inserir(std::string($2), Tipo::BOOL); }
-    | T_CHAR ID ';' { tabela.inserir(std::string($2), Tipo::CHAR); }
+    T_INT ID ';' { 
+          tabela.inserir(std::string($2), Tipo::INT); 
+          buffer_codigo.push_back("int " + std::string($2) + ";"); // Gera o código C
+      }
+    | T_FLOAT ID ';' { 
+          tabela.inserir(std::string($2), Tipo::FLOAT); 
+          buffer_codigo.push_back("float " + std::string($2) + ";"); 
+      }
+    | T_BOOL ID ';'  { 
+          tabela.inserir(std::string($2), Tipo::BOOL); 
+          buffer_codigo.push_back("bool " + std::string($2) + ";"); 
+      }
+    | T_CHAR ID ';'  { 
+          tabela.inserir(std::string($2), Tipo::CHAR); 
+          buffer_codigo.push_back("char " + std::string($2) + ";"); 
+      }
     | ID ATRIB expressao ';' { 
             std::string nome_str($1);
 
@@ -95,7 +107,7 @@ comando:
             else if (tipo_destino == 1 && $3.tipo == 0) {
                 // Regra B: Coerção Segura (Widening). Guardando um 'int' em um espaço 'float'.
                 std::string t_conv = gerador.novoTemporario();
-                buffer_codigo.push_back("$" + t_conv + " = (float) " + std::string($3.nome) + ";$");
+                buffer_codigo.push_back(t_conv + " = (float) " + std::string($3.nome) + ";");
                 
                 // Atribui o temporário que foi convertido para float à variável de destino
                 gera_codigo_atribuicao($1, copia_string(t_conv));
@@ -111,12 +123,19 @@ comando:
     | bloco
     ;
 
+/* Regras de Escopo (Blocos de código) */
 bloco:
-      '{' { tabela.entrarEscopo(); } comandos_bloco '}' { tabela.sairEscopo(); }
+      '{' { 
+          tabela.entrarEscopo(); 
+          buffer_codigo.push_back("{"); // Abre escopo no C
+      } comandos_bloco '}' { 
+          tabela.sairEscopo(); 
+          buffer_codigo.push_back("}"); // Fecha escopo no C
+      }
     ;
 
 comandos_bloco:
-      /* Vazio (permite blocos sem nada dentro tipo { }) */
+      /* Vazio (O cenário base para o Bison saber parar) */
     | comandos_bloco comando
     ;
 
@@ -213,7 +232,7 @@ expressao:
         std::string t_res = gerador.novoTemporario();
         $$.nome = copia_string(t_res);
         $$.tipo = 2; // Resultado de ! é sempre booleano
-        buffer_codigo.push_back("$" + t_res + " = !" + std::string($2.nome) + ";$");
+        buffer_codigo.push_back(t_res + " = !" + std::string($2.nome) + ";");
     }
     
     /* Menos Unário (Números Negativos) */
@@ -227,7 +246,7 @@ expressao:
         $$.nome = copia_string(t_res);
         $$.tipo = $2.tipo; // Mantém o tipo (se era int, continua int. se era float, continua float)
         
-        buffer_codigo.push_back("$" + t_res + " = -" + std::string($2.nome) + ";$");
+        buffer_codigo.push_back(t_res + " = -" + std::string($2.nome) + ";");
     }
     
     /* Casting e Parênteses */
@@ -245,21 +264,21 @@ Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2
     
     // REGRA 1: Se os tipos são idênticos, a operação segue normalmente (ex: int + int)
     if (t1 == t2) {
-        buffer_codigo.push_back("$" + t_res + " = " + std::string(n1) + " " + op + " " + std::string(n2) + ";$");
+        buffer_codigo.push_back(t_res + " = " + std::string(n1) + " " + op + " " + std::string(n2) + ";");
         res.tipo = t1;
     } 
     // REGRA 2: Coerção Segura (Widening) -> int (0) + float (1)
     else if (t1 == 0 && t2 == 1) {
         std::string t_conv = gerador.novoTemporario();
-        buffer_codigo.push_back("$" + t_conv + " = (float) " + std::string(n1) + ";$");
-        buffer_codigo.push_back("$" + t_res + " = " + t_conv + " " + op + " " + std::string(n2) + ";$");
+        buffer_codigo.push_back(t_conv + " = (float) " + std::string(n1) + ";");
+        buffer_codigo.push_back(t_res + " = " + t_conv + " " + op + " " + std::string(n2) + ";");
         res.tipo = 1; // O resultado vira float
     } 
     // REGRA 3: Coerção Segura (Widening) -> float (1) + int (0)
     else if (t1 == 1 && t2 == 0) {
         std::string t_conv = gerador.novoTemporario();
-        buffer_codigo.push_back("$" + t_conv + " = (float) " + std::string(n2) + ";$");
-        buffer_codigo.push_back("$" + t_res + " = " + std::string(n1) + " " + op + " " + t_conv + ";$");
+        buffer_codigo.push_back(t_conv + " = (float) " + std::string(n2) + ";");
+        buffer_codigo.push_back(t_res + " = " + std::string(n1) + " " + op + " " + t_conv + ";");
         res.tipo = 1; // O resultado vira float
     } 
     // REGRA 4: Filosofia Java/C# -> Qualquer outra mistura é proibida!
@@ -274,7 +293,7 @@ Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2
 }
 
 void gera_codigo_atribuicao(char* id, char* n_exp) {
-    buffer_codigo.push_back("$" + std::string(id) + " = " + std::string(n_exp) + ";$");
+    buffer_codigo.push_back(std::string(id) + " = " + std::string(n_exp) + ";");
 }
 
 Atributo gera_codigo_casting(int tipo_destino, char* n_exp) {
@@ -284,7 +303,7 @@ Atributo gera_codigo_casting(int tipo_destino, char* n_exp) {
     res.tipo = tipo_destino;
     std::string str_tipo = (tipo_destino == 0) ? "int" : "float";
     
-    buffer_codigo.push_back("$" + t_res + " = (" + str_tipo + ") " + std::string(n_exp) + ";$");
+    buffer_codigo.push_back(t_res + " = (" + str_tipo + ") " + std::string(n_exp) + ";");
     return res;
 }
 
@@ -294,14 +313,23 @@ void yyerror(const char *s) {
 
 int main() {
     yyparse();
+
+    // GERAÇÃO DO CÓDIGO FINAL EM C
+    std::cout << "#include <stdio.h>\n";
+    std::cout << "#include <stdbool.h> // Para o gcc entender booleanos\n\n";
+    std::cout << "int main() {\n";
     
-    declarador.imprimirDeclaracoes(gerador.getTemporarios(), tabela, Tipo::INT);
+    // 1. Imprime os temporários declarados
+    declarador.imprimirDeclaracoes(gerador.getTemporarios(), tabela);
     
-    size_t i = 0;
-    while (i < buffer_codigo.size()) {
-        std::cout << buffer_codigo[i] << std::endl;
-        i++;
+    // 2. Imprime todo o código gerado indentado
+    for (const std::string& linha : buffer_codigo) {
+        std::cout << "    " << linha << "\n";
     }
     
+    // 3. Finaliza o programa C
+    std::cout << "    return 0;\n";
+    std::cout << "}\n";
+
     return 0;
 }
