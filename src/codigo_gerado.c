@@ -1,10 +1,3 @@
-'a' Escopo Nivel 0
-'b' Escopo Nivel 1
-'c' Escopo Nivel 2
-'c' Escopo Nivel 2
-'b' Escopo Nivel 1
-'b' Escopo Nivel 1
-'a' Escopo Nivel 0
 #include <stdio.h>
 #include <stdbool.h> // Para o gcc entender booleanos
 

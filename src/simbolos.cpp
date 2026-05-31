@@ -62,7 +62,7 @@ Tipo TabelaDeSimbolos::buscar(const std::string& nome) const {
     for (auto it = pilha_tabelas.rbegin(); it != pilha_tabelas.rend(); ++it) {
         auto found = it->find(nome);
         if (found != it->end()) {
-            std::cout << "'" << nome << "' Escopo Nivel " << nivel_atual << "\n";
+            std::cerr << "'" << nome << "' Escopo Nivel " << nivel_atual << "\n";
             
             return found->second; 
         }
@@ -86,17 +86,17 @@ bool TabelaDeSimbolos::existe(const std::string& nome) const {
 }
 
 void TabelaDeSimbolos::imprimir() const {
-    std::cout << "\n--- Estado Atual da Tabela de Simbolos ---\n";
+    std::cerr << "\n--- Estado Atual da Tabela de Simbolos ---\n";
     // Percorre todos os escopos, do mais antigo ao mais novo
     for (size_t i = 0; i < pilha_tabelas.size(); ++i) {
-        std::cout << "Escopo Nivel " << i << ":\n";
+        std::cerr << "Escopo Nivel " << i << ":\n";
         if (pilha_tabelas[i].empty()) {
-            std::cout << "  (vazio)\n";
+            std::cerr << "  (vazio)\n";
         } else {
             for (const auto& par : pilha_tabelas[i]) {
-                std::cout << "  - " << par.first << " : " << tipoParaString(par.second) << "\n";
+                std::cerr << "  - " << par.first << " : " << tipoParaString(par.second) << "\n";
             }
         }
     }
-    std::cout << "------------------------------------------\n\n";
+    std::cerr << "------------------------------------------\n\n";
 }
