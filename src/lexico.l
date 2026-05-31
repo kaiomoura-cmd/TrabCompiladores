@@ -20,9 +20,13 @@ char* copia_string_lex(const char* texto) {
 "float"                { return T_FLOAT; }
 "bool"                 { return T_BOOL; }
 "char"                 { return T_CHAR; }
+"string"               { return T_STRING; }
+"read"                 { return READ; }
+"write"                { return WRITE; }
 "true"                 { yylval.str = copia_string_lex("1"); return TRUE; }
 "false"                { yylval.str = copia_string_lex("0"); return FALSE; }
 \'[a-zA-Z0-9]\'        { yylval.str = copia_string_lex(yytext); return LITERAL_CHAR; }
+\"([^\"\n\\]|\\.)*\"   {yylval.str = copia_string_lex(yytext); return LITERAL_STRING;}
 [a-zA-Z_][a-zA-Z0-9_]* { yylval.str = copia_string_lex(yytext); return ID; }
 
 ">="                   { return MAIOR_IGUAL; }

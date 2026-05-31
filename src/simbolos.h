@@ -12,6 +12,7 @@ enum class Tipo {
     FLOAT,
     BOOL,
     CHAR,
+    STRING,
     DESCONHECIDO
 };
 

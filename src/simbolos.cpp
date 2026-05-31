@@ -12,6 +12,7 @@ Tipo stringParaTipo(const std::string& s) {
     if (s == "float") return Tipo::FLOAT;
     if (s == "bool")  return Tipo::BOOL;
     if (s == "char")  return Tipo::CHAR;
+    if (s == "string") return Tipo::STRING;
     return Tipo::DESCONHECIDO;
 }
 
@@ -21,6 +22,7 @@ std::string tipoParaString(Tipo t) {
         case Tipo::FLOAT: return "float";
         case Tipo::BOOL:  return "bool";
         case Tipo::CHAR:  return "char";
+        case Tipo::STRING: return "string";
         default:          return "desconhecido";
     }
 }

@@ -39,8 +39,8 @@ char* copia_string(const std::string& str) {
     } info;
 }
 
-%token <str> ID NUM_INTEIRO NUM_REAL LITERAL_CHAR
-%token T_INT T_FLOAT T_BOOL T_CHAR ';'
+%token <str> ID NUM_INTEIRO NUM_REAL LITERAL_CHAR LITERAL_STRING
+%token T_INT T_FLOAT T_BOOL T_CHAR T_STRING';'
 %token SOM SUB MULT DIV ATRIB ABRE_PAR FECHA_PAR
 %token MAIOR MENOR MAIOR_IGUAL MENOR_IGUAL IGUAL DIFERENTE E_LOGICO OU_LOGICO NEGACAO
 %token TRUE FALSE
@@ -80,6 +80,10 @@ comando:
           tabela.inserir(std::string($2), Tipo::CHAR); 
           buffer_codigo.push_back("char " + std::string($2) + ";"); 
       }
+    | T_STRING ID ';' { 
+            tabela.inserir(std::string($2), Tipo::STRING);
+            buffer_codigo.push_back("string " + std::string($2) + ";");
+        }
     | ID ATRIB expressao ';' { 
             std::string nome_str($1);
 
@@ -119,6 +123,20 @@ comando:
                 exit(1);
             }
         }
+    | READ ABRE_PAR ID FECHA_PAR ';' {
+            std::string nome_str($3);
+            if (!tabela.existe(nome_str)) {
+                std::string msg = "Erro Semantico: Variavel '" + nome_str +
+                                  "' nao declarada. Declare antes de usar em read().";
+                yyerror(msg.c_str());
+                exit(1);
+            }
+            // Gera instrução de leitura no código intermediário
+            buffer_codigo.push_back("$read " + nome_str + ";$");
+        }
+    | WRITE ABRE_PAR expressao FECHA_PAR ';' {
+            buffer_codigo.push_back("$write " + std::string($3.nome) + ";$");
+        }
     | expressao ';' 
     | bloco
     ;
@@ -128,10 +146,10 @@ bloco:
       '{' { 
           tabela.entrarEscopo(); 
           buffer_codigo.push_back("{"); // Abre escopo no C
-      } comandos_bloco '}' { 
+        } comandos_bloco '}' { 
           tabela.sairEscopo(); 
           buffer_codigo.push_back("}"); // Fecha escopo no C
-      }
+        }
     ;
 
 comandos_bloco:
@@ -151,6 +169,10 @@ expressao:
     | LITERAL_CHAR { 
         $$.nome = copia_string(std::string($1));
         $$.tipo = 3; // CHAR
+    }
+    | LITERAL_STRING {
+        $$.nome = copia_string(std::string($1));
+        $$.tipo = 4; // STRING
     }
     | TRUE { // Token para a palavra true
         $$.nome = copia_string("1");
@@ -261,6 +283,19 @@ Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2
     Atributo res;
     std::string t_res = gerador.novoTemporario();
     res.nome = copia_string(t_res);
+
+    if (t1 == 4 || t2 == 4) {
+        // Única saída permitida: string + string (concatenação)
+        if (t1 == 4 && t2 == 4 && std::string(op) == "+") {
+            buffer_codigo.push_back("$" + t_res + " = " + std::string(n1) + " + " + std::string(n2) + ";$");
+            res.tipo = 4;
+            return res;
+        }
+        // Qualquer outra operação envolvendo string → erro semântico
+        std::string msg = "Erro Semantico: Operacao '" + std::string(op) + "' invalida com tipo string. " "Strings so suportam concatenacao (string + string).";
+        yyerror(msg.c_str());
+        exit(1);
+    }
     
     // REGRA 1: Se os tipos são idênticos, a operação segue normalmente (ex: int + int)
     if (t1 == t2) {
