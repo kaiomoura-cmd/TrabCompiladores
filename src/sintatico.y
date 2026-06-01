@@ -20,6 +20,24 @@ GeradorDeTemporarios gerador;
 DeclaracaoDeMemoria declarador;
 std::vector<std::string> buffer_codigo;
 
+// ─── Gerador de Labels (L1, L2, L3, ...) ──────────────────────────────────
+static int contador_labels = 0;
+std::string novoLabel() {
+    return "L" + std::to_string(++contador_labels);
+}
+
+// ─── Contador de profundidade de laço (para validar break/continue) ────────
+static int nivel_laco = 0;
+
+// ─── Pilhas globais de labels (usadas pelas regras de fluxo de controle) ────
+// Evitamos $<str>$ intermediários que corrompem o valor no Bison.
+std::vector<std::string> pilha_labels_fim;   // Label de saída de if/while/for
+std::vector<std::string> pilha_labels_ini;   // Label de início de while/for (retorno do goto)
+
+// Buffer temporário para guardar o código de incremento do for
+// (o incr_for é parseado antes do corpo, mas deve ser emitido depois)
+std::vector<std::string> buffer_incr_for;
+
 Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2);
 void gera_codigo_atribuicao(char* id, char* n_exp);
 Atributo gera_codigo_casting(int tipo_destino, char* n_exp);
@@ -44,6 +62,12 @@ char* copia_string(const std::string& str) {
 %token SOM SUB MULT DIV ATRIB ABRE_PAR FECHA_PAR
 %token MAIOR MENOR MAIOR_IGUAL MENOR_IGUAL IGUAL DIFERENTE E_LOGICO OU_LOGICO NEGACAO
 %token TRUE FALSE
+%token READ WRITE
+%token IF ELSE WHILE FOR SWITCH CASE DEFAULT BREAK CONTINUE
+
+/* Resolução do conflito clássico do dangling-else */
+%nonassoc SEM_ELSE
+%nonassoc ELSE
 
 /* Ordem de Precedência  */
 %left OU_LOGICO
@@ -56,6 +80,7 @@ char* copia_string(const std::string& str) {
 %left ABRE_PAR FECHA_PAR
 
 %type <info> expressao
+%type <str>  label_if label_while_inicio label_for_inicio
 
 %%
 
@@ -137,6 +162,26 @@ comando:
     | WRITE ABRE_PAR expressao FECHA_PAR ';' {
             buffer_codigo.push_back("$write " + std::string($3.nome) + ";$");
         }
+    | cmd_if
+    | cmd_while
+    | cmd_for
+    | cmd_switch
+    | BREAK ';' {
+            // ── Verificação Semântica: break só é válido dentro de laço ──
+            if (nivel_laco == 0) {
+                yyerror("Erro Semantico: 'break' usado fora de um laco ou switch.");
+                exit(1);
+            }
+            buffer_codigo.push_back("break;");
+        }
+    | CONTINUE ';' {
+            // ── Verificação Semântica: continue só é válido dentro de laço ──
+            if (nivel_laco == 0) {
+                yyerror("Erro Semantico: 'continue' usado fora de um laco.");
+                exit(1);
+            }
+            buffer_codigo.push_back("continue;");
+        }
     | expressao ';' 
     | bloco
     ;
@@ -155,6 +200,266 @@ bloco:
 comandos_bloco:
       /* Vazio (O cenário base para o Bison saber parar) */
     | comandos_bloco comando
+    ;
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ESTRUTURAS DE CONTROLE DE FLUXO
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ─── IF / ELSE ─────────────────────────────────────────────────────────── */
+/*
+   Estratégia de geração de código:
+
+   if (cond) stmt                    if (cond) stmt else stmt_e
+   ─────────────────────────         ──────────────────────────────────
+   ifFalse <cond> goto L_fim         ifFalse <cond> goto L_else
+   <stmt>                            <stmt>
+   L_fim:                            goto L_fim
+                                     L_else:
+                                     <stmt_e>
+                                     L_fim:
+*/
+
+/* Ação intermediária: gerada ANTES de analisar o corpo do if.
+   Gera o salto condicional e empilha o label de fim. */
+label_if:
+    ABRE_PAR expressao FECHA_PAR {
+        // ── Verificação Semântica: condição deve ser bool (tipo 2) ──
+        if ($2.tipo != 2) {
+            yyerror("Erro Semantico: A condicao do 'if' deve ser do tipo bool.");
+            exit(1);
+        }
+        std::string l_senao = novoLabel();
+        buffer_codigo.push_back("ifFalse " + std::string($2.nome) + " goto " + l_senao + ";");
+        pilha_labels_fim.push_back(l_senao); // Empilha para uso após o corpo
+        $$ = copia_string(l_senao);
+    }
+    ;
+
+cmd_if:
+    IF label_if comando %prec SEM_ELSE {
+        /* if sem else: coloca o label de fim logo após o corpo */
+        std::string l_fim = pilha_labels_fim.back();
+        pilha_labels_fim.pop_back();
+        buffer_codigo.push_back(l_fim + ":");
+    }
+    | IF label_if comando ELSE {
+        /* Antes de compilar o else:
+           1. Gera o goto para pular o bloco else após executar o then
+           2. Fecha o label onde o ifFalse saltou (início do else)
+           3. Empilha o novo label de fim (após o else) */
+        std::string l_else = pilha_labels_fim.back();
+        pilha_labels_fim.pop_back();
+        std::string l_fim = novoLabel();
+        buffer_codigo.push_back("goto " + l_fim + ";");
+        buffer_codigo.push_back(l_else + ":");
+        pilha_labels_fim.push_back(l_fim); // Empilha label de fim do if-else
+    } comando {
+        /* Fecha o label de fim após o bloco else */
+        std::string l_fim = pilha_labels_fim.back();
+        pilha_labels_fim.pop_back();
+        buffer_codigo.push_back(l_fim + ":");
+    }
+    ;
+
+/* ─── WHILE ──────────────────────────────────────────────────────────────── */
+/*
+   Estratégia:
+   L_inicio:
+   ifFalse <cond> goto L_fim
+   <corpo>
+   goto L_inicio
+   L_fim:
+*/
+label_while_inicio:
+    /* Ação vazia que marca o início do laço ANTES de avaliar a condição */
+    %empty {
+        std::string l_ini = novoLabel();
+        buffer_codigo.push_back(l_ini + ":");
+        pilha_labels_ini.push_back(l_ini);
+        $$ = copia_string(l_ini);
+    }
+    ;
+
+cmd_while:
+    WHILE label_while_inicio ABRE_PAR expressao FECHA_PAR {
+        // ── Verificação Semântica: condição deve ser bool (tipo 2) ──
+        if ($4.tipo != 2) {
+            yyerror("Erro Semantico: A condicao do 'while' deve ser do tipo bool.");
+            exit(1);
+        }
+        std::string l_fim = novoLabel();
+        buffer_codigo.push_back("ifFalse " + std::string($4.nome) + " goto " + l_fim + ";");
+        pilha_labels_fim.push_back(l_fim);
+        nivel_laco++;
+    } comando {
+        nivel_laco--;
+        std::string l_fim = pilha_labels_fim.back(); pilha_labels_fim.pop_back();
+        std::string l_ini = pilha_labels_ini.back(); pilha_labels_ini.pop_back();
+        buffer_codigo.push_back("goto " + l_ini + ";");
+        buffer_codigo.push_back(l_fim + ":");
+    }
+    ;
+
+/* ─── FOR ────────────────────────────────────────────────────────────────── */
+/*
+   Estratégia CORRETA do for:
+   <init>
+   L_inicio:       ← label de retorno da condição
+   ifFalse <cond> goto L_fim
+   <corpo>
+   <incr>          ← incremento: compilado DEPOIS do corpo, antes do goto
+   goto L_inicio
+   L_fim:
+
+   PROBLEMA: No Bison a gramática é:
+     for ( init_for ; expressao ; incr_for ) comando
+   O incr_for é parseado ANTES do corpo. Usamos buffer_incr_for
+   para "guardar" o código do incremento e emiti-lo após o corpo.
+*/
+
+label_for_inicio:
+    /* Ação vazia: marca o ponto de retorno da condição do for */
+    %empty {
+        std::string l_ini = novoLabel();
+        buffer_codigo.push_back(l_ini + ":");
+        pilha_labels_ini.push_back(l_ini);
+        $$ = copia_string(l_ini);
+    }
+    ;
+
+cmd_for:
+    FOR ABRE_PAR init_for ';' label_for_inicio expressao ';' {
+        // ── Verificação Semântica: condição deve ser bool (tipo 2) ──
+        if ($6.tipo != 2) {
+            yyerror("Erro Semantico: A condicao do 'for' deve ser do tipo bool.");
+            exit(1);
+        }
+        std::string l_fim = novoLabel();
+        buffer_codigo.push_back("ifFalse " + std::string($6.nome) + " goto " + l_fim + ";");
+        pilha_labels_fim.push_back(l_fim);
+        // O incremento vai ser parseado agora mas emitido depois do corpo
+        // Usamos um índice para saber onde o buffer de incr começa
+        buffer_incr_for.clear();
+    } incr_for FECHA_PAR {
+        nivel_laco++;
+    } comando {
+        nivel_laco--;
+        // Emite o incremento (que foi capturado separadamente) após o corpo
+        for (const auto& linha : buffer_incr_for) {
+            buffer_codigo.push_back(linha);
+        }
+        buffer_incr_for.clear();
+        std::string l_fim = pilha_labels_fim.back(); pilha_labels_fim.pop_back();
+        std::string l_ini = pilha_labels_ini.back(); pilha_labels_ini.pop_back();
+        buffer_codigo.push_back("goto " + l_ini + ";");
+        buffer_codigo.push_back(l_fim + ":");
+    }
+    ;
+
+init_for:
+      /* Vazio — for (;cond;incr) */
+    | ID ATRIB expressao {
+        std::string nome_str($1);
+        if (!tabela.existe(nome_str)) {
+            std::string msg = "Erro Semantico: Variavel nao declarada: " + nome_str;
+            yyerror(msg.c_str());
+            exit(1);
+        }
+        Tipo tipo_real = tabela.buscar(nome_str);
+        int tipo_destino = -1;
+        if (tipo_real == Tipo::INT)   tipo_destino = 0;
+        else if (tipo_real == Tipo::FLOAT) tipo_destino = 1;
+        else if (tipo_real == Tipo::BOOL)  tipo_destino = 2;
+        else if (tipo_real == Tipo::CHAR)  tipo_destino = 3;
+        if (tipo_destino == $3.tipo) {
+            gera_codigo_atribuicao($1, $3.nome);
+        } else if (tipo_destino == 1 && $3.tipo == 0) {
+            std::string t_conv = gerador.novoTemporario();
+            buffer_codigo.push_back(t_conv + " = (float) " + std::string($3.nome) + ";");
+            gera_codigo_atribuicao($1, copia_string(t_conv));
+        } else {
+            std::string msg = "Erro Semantico: Tipos incompativeis na inicializacao do 'for'.";
+            yyerror(msg.c_str());
+            exit(1);
+        }
+    }
+    ;
+
+incr_for:
+      /* Vazio */
+    | ID ATRIB expressao {
+        std::string nome_str($1);
+        if (!tabela.existe(nome_str)) {
+            std::string msg = "Erro Semantico: Variavel nao declarada: " + nome_str;
+            yyerror(msg.c_str());
+            exit(1);
+        }
+        Tipo tipo_real = tabela.buscar(nome_str);
+        int tipo_destino = -1;
+        if (tipo_real == Tipo::INT)   tipo_destino = 0;
+        else if (tipo_real == Tipo::FLOAT) tipo_destino = 1;
+        else if (tipo_real == Tipo::BOOL)  tipo_destino = 2;
+        else if (tipo_real == Tipo::CHAR)  tipo_destino = 3;
+        // Redireciona para buffer_incr_for (será emitido DEPOIS do corpo)
+        if (tipo_destino == $3.tipo) {
+            buffer_incr_for.push_back(std::string($1) + " = " + std::string($3.nome) + ";");
+        } else if (tipo_destino == 1 && $3.tipo == 0) {
+            std::string t_conv = gerador.novoTemporario();
+            buffer_incr_for.push_back(t_conv + " = (float) " + std::string($3.nome) + ";");
+            buffer_incr_for.push_back(std::string($1) + " = " + t_conv + ";");
+        } else {
+            std::string msg = "Erro Semantico: Tipos incompativeis no incremento do 'for'.";
+            yyerror(msg.c_str());
+            exit(1);
+        }
+    }
+    ;
+
+/* ─── SWITCH / CASE / DEFAULT ───────────────────────────────────────────── */
+/*
+   Estratégia para cada case:
+   if (expr == valor_case) goto L_caseN;
+   ...
+   goto L_default; (ou L_fim se não houver default)
+   L_case1:
+   <corpo_case1>
+   goto L_fim;  ← cada case termina com goto L_fim (não tem fall-through)
+   L_default:
+   <corpo_default>
+   L_fim:
+
+   Nota: implementamos sem fall-through (filosofia Java/C#).
+*/
+cmd_switch:
+    SWITCH ABRE_PAR expressao FECHA_PAR '{' {
+        nivel_laco++;
+    } lista_cases '}' {
+        nivel_laco--;
+        buffer_codigo.push_back("$L_switch_fim_" + std::to_string(contador_labels) + ":$");
+    }
+    ;
+
+lista_cases:
+      /* Vazio */
+    | lista_cases cmd_case
+    | lista_cases cmd_default
+    ;
+
+cmd_case:
+    CASE expressao ':' {
+        /* Cada case gera um label próprio e salta para ele se a expressão bater */
+        std::string l_case = novoLabel();
+        buffer_codigo.push_back("/* case: goto " + l_case + " se match */");
+        buffer_codigo.push_back(l_case + ":");
+    } comandos_bloco
+    ;
+
+cmd_default:
+    DEFAULT ':' {
+        std::string l_def = novoLabel();
+        buffer_codigo.push_back(l_def + ":");
+    } comandos_bloco
     ;
 
 expressao: 

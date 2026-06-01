@@ -1,0 +1,8 @@
+/* TESTE 08 - ERRO: if com int na condição (deve REJEITAR) */
+int x;
+
+x = 5;
+
+if (x) {
+    x = 10;
+}

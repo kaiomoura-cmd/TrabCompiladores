@@ -25,6 +25,15 @@ char* copia_string_lex(const char* texto) {
 "write"                { return WRITE; }
 "true"                 { yylval.str = copia_string_lex("1"); return TRUE; }
 "false"                { yylval.str = copia_string_lex("0"); return FALSE; }
+"if"                   { return IF; }
+"else"                 { return ELSE; }
+"while"                { return WHILE; }
+"for"                  { return FOR; }
+"switch"               { return SWITCH; }
+"case"                 { return CASE; }
+"default"              { return DEFAULT; }
+"break"                { return BREAK; }
+"continue"             { return CONTINUE; }
 \'[a-zA-Z0-9]\'        { yylval.str = copia_string_lex(yytext); return LITERAL_CHAR; }
 \"([^\"\n\\]|\\.)*\"   {yylval.str = copia_string_lex(yytext); return LITERAL_STRING;}
 [a-zA-Z_][a-zA-Z0-9_]* { yylval.str = copia_string_lex(yytext); return ID; }
@@ -50,7 +59,9 @@ char* copia_string_lex(const char* texto) {
 "}"                    { return '}'; }
 ";"                    { return ';'; }
 
-[ \t\n\r]+             {}
-.                      { return yytext[0]; }
+[ \t\n\r]+              {}
+"/*"([^*]|\*+[^*/])*\*+"/" {}
+"//"[^\n]*              {}
+.                       { return yytext[0]; }
 
 %%

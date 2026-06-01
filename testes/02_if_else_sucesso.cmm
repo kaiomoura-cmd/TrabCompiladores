@@ -1,0 +1,12 @@
+/* TESTE 02 - if com else: DEVE FUNCIONAR */
+int nota;
+bool aprovado;
+
+nota = 7;
+aprovado = nota > 5;
+
+if (aprovado) {
+    nota = 10;
+} else {
+    nota = 0;
+}

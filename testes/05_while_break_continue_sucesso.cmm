@@ -1,0 +1,20 @@
+/* TESTE 05 - while com break e continue: DEVE FUNCIONAR */
+int i;
+bool rodando;
+
+i = 0;
+rodando = true;
+
+while (rodando) {
+    i = i + 1;
+    bool par;
+    par = i == 2;
+    if (par) {
+        continue;
+    }
+    bool fim;
+    fim = i >= 5;
+    if (fim) {
+        break;
+    }
+}

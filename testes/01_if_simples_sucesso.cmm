@@ -1,0 +1,10 @@
+/* TESTE 01 - if simples com bool: DEVE FUNCIONAR */
+int x;
+bool ativo;
+
+x = 10;
+ativo = true;
+
+if (ativo) {
+    x = 99;
+}
