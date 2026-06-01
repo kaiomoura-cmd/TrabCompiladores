@@ -18,12 +18,12 @@ Tipo stringParaTipo(const std::string& s) {
 
 std::string tipoParaString(Tipo t) {
     switch (t) {
-        case Tipo::INT:   return "int";
-        case Tipo::FLOAT: return "float";
-        case Tipo::BOOL:  return "bool";
-        case Tipo::CHAR:  return "char";
+        case Tipo::INT:    return "int";
+        case Tipo::FLOAT:  return "float";
+        case Tipo::BOOL:   return "int";   // bool → int no código intermediário (0/1)
+        case Tipo::CHAR:   return "char";
         case Tipo::STRING: return "string";
-        default:          return "desconhecido";
+        default:           return "desconhecido";
     }
 }
 

@@ -99,7 +99,7 @@ comando:
       }
     | T_BOOL ID ';'  { 
           tabela.inserir(std::string($2), Tipo::BOOL); 
-          buffer_codigo.push_back("bool " + std::string($2) + ";"); 
+          buffer_codigo.push_back("int " + std::string($2) + "; /* bool */"); 
       }
     | T_CHAR ID ';'  { 
           tabela.inserir(std::string($2), Tipo::CHAR); 
@@ -654,9 +654,8 @@ void yyerror(const char *s) {
 int main() {
     yyparse();
 
-    // GERAÇÃO DO CÓDIGO FINAL EM C
-    std::cout << "#include <stdio.h>\n";
-    std::cout << "#include <stdbool.h> // Para o gcc entender booleanos\n\n";
+    // Nenhum #include externo: o codigo intermediario é auto-contido.
+    // bool é representado como int (0 = false, 1 = true) — o type check já foi feito.
     std::cout << "int main() {\n";
     
     // 1. Imprime os temporários declarados
