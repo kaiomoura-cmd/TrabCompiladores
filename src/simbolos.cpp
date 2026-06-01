@@ -64,8 +64,6 @@ Tipo TabelaDeSimbolos::buscar(const std::string& nome) const {
     for (auto it = pilha_tabelas.rbegin(); it != pilha_tabelas.rend(); ++it) {
         auto found = it->find(nome);
         if (found != it->end()) {
-            std::cerr << "'" << nome << "' Escopo Nivel " << nivel_atual << "\n";
-            
             return found->second; 
         }
         nivel_atual--; 
