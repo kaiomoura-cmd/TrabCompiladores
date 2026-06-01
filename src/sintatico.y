@@ -9,6 +9,7 @@
 
 int yylex();
 void yyerror(const char *s);
+extern FILE* yyin; // variável global do Flex que controla a fonte de leitura
 
 struct Atributo {
     char* nome;
@@ -651,7 +652,22 @@ void yyerror(const char *s) {
     std::cerr << s << std::endl;
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    // Suporte a argumento de arquivo: ./compilador arquivo.cmm
+    // Se nenhum argumento for passado, lê da entrada padrão (stdin)
+    if (argc == 2) {
+        FILE* arquivo = fopen(argv[1], "r");
+        if (!arquivo) {
+            std::cerr << "Erro: nao foi possivel abrir o arquivo '" << argv[1] << "'\n";
+            return 1;
+        }
+        yyin = arquivo; // yyin é a variável global do Flex que controla a fonte de leitura
+    } else if (argc > 2) {
+        std::cerr << "Uso: " << argv[0] << " [arquivo.cmm]\n";
+        std::cerr << "     " << argv[0] << " < arquivo.cmm\n";
+        return 1;
+    }
+
     yyparse();
 
     // Nenhum #include externo: o codigo intermediario é auto-contido.
@@ -670,5 +686,6 @@ int main() {
     std::cout << "    return 0;\n";
     std::cout << "}\n";
 
+    if (argc == 2) fclose(yyin);
     return 0;
 }
