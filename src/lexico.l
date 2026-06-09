@@ -1,4 +1,5 @@
 %option noyywrap
+%option yylineno
 
 %{
 #include "sintatico.tab.h"
@@ -21,6 +22,9 @@ char* copia_string_lex(const char* texto) {
 "bool"                 { return T_BOOL; }
 "char"                 { return T_CHAR; }
 "string"               { return T_STRING; }
+"void"                 { return T_VOID; }
+"return"               { return RETURN; }
+"enum"                 { return ENUM; }
 "read"                 { return READ; }
 "write"                { return WRITE; }
 "true"                 { yylval.str = copia_string_lex("1"); return TRUE; }
@@ -48,6 +52,13 @@ char* copia_string_lex(const char* texto) {
 "||"                   { return OU_LOGICO; }
 "!"                    { return NEGACAO; }
 
+"+="                   { return MAIS_ATRIB; }
+"-="                   { return MENOS_ATRIB; }
+"*="                   { return MULT_ATRIB; }
+"/="                   { return DIV_ATRIB; }
+"++"                   { return INC; }
+"--"                   { return DEC; }
+
 "+"                    { return SOM; }
 "-"                    { return SUB; }
 "*"                    { return MULT; }
@@ -57,7 +68,11 @@ char* copia_string_lex(const char* texto) {
 ")"                    { return FECHA_PAR; }
 "{"                    { return '{'; }
 "}"                    { return '}'; }
+"["                    { return '['; }
+"]"                    { return ']'; }
 ";"                    { return ';'; }
+":"                    { return ':'; }
+","                    { return ','; }
 
 [ \t\n\r]+              {}
 "/*"([^*]|\*+[^*/])*\*+"/" {}

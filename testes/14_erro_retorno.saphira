@@ -1,0 +1,6 @@
+/* TESTE 14 - Erro de Retorno de Função
+   Garante que o compilador detecte retornos incompativeis. */
+
+int funcao_invalida() {
+    return "Erro"; // Tipo de retorno incompatível (string para int)
+}

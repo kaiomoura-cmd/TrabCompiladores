@@ -13,6 +13,7 @@ Tipo stringParaTipo(const std::string& s) {
     if (s == "bool")  return Tipo::BOOL;
     if (s == "char")  return Tipo::CHAR;
     if (s == "string") return Tipo::STRING;
+    if (s == "void")  return Tipo::VOID;
     return Tipo::DESCONHECIDO;
 }
 
@@ -23,6 +24,7 @@ std::string tipoParaString(Tipo t) {
         case Tipo::BOOL:   return "int";   // bool → int no código intermediário (0/1)
         case Tipo::CHAR:   return "char";
         case Tipo::STRING: return "string";
+        case Tipo::VOID:   return "void";
         default:           return "desconhecido";
     }
 }
@@ -35,7 +37,7 @@ TabelaDeSimbolos::TabelaDeSimbolos() {
 
 void TabelaDeSimbolos::entrarEscopo() {
     // Coloca uma nova "folha transparente" no topo da pilha
-    pilha_tabelas.push_back(std::unordered_map<std::string, Tipo>());
+    pilha_tabelas.push_back(std::unordered_map<std::string, Simbolo>());
 }
 
 void TabelaDeSimbolos::sairEscopo() {
@@ -48,53 +50,63 @@ void TabelaDeSimbolos::sairEscopo() {
 //Métodos da TabelaDeSimbolos
 
 void TabelaDeSimbolos::inserir(const std::string& nome, Tipo tipo) {
+    Simbolo simb;
+    simb.nome = nome;
+    simb.tipo = tipo;
+    inserirSimbolo(nome, simb);
+}
+
+void TabelaDeSimbolos::inserirSimbolo(const std::string& nome, const Simbolo& simb) {
     // Olha APENAS para a tabela que está no topo da pilha (.back())
     if (pilha_tabelas.back().count(nome) > 0) {
-        std::string msg = "Erro Semantico: Variavel '" + nome + "' ja declarada neste escopo.";
+        std::string msg = "Erro Semantico: Identificador '" + nome + "' ja declarado neste escopo.";
         yyerror(msg.c_str());
         exit(1);
     }
-    // Insere a variável no escopo atual
-    pilha_tabelas.back()[nome] = tipo;
+    // Insere o símbolo no escopo atual
+    pilha_tabelas.back()[nome] = simb;
 }
 
 Tipo TabelaDeSimbolos::buscar(const std::string& nome) const {
-    int nivel_atual = pilha_tabelas.size() - 1;
-    
+    return buscarSimbolo(nome).tipo;
+}
+
+Simbolo TabelaDeSimbolos::buscarSimbolo(const std::string& nome) const {
     for (auto it = pilha_tabelas.rbegin(); it != pilha_tabelas.rend(); ++it) {
         auto found = it->find(nome);
         if (found != it->end()) {
             return found->second; 
         }
-        nivel_atual--; 
     }
     
-    std::string msg = "Erro Semantico: Variavel '" + nome + "' nao declarada.";
+    std::string msg = "Erro Semantico: Variavel ou identificador '" + nome + "' nao declarado.";
     yyerror(msg.c_str());
     exit(1);
-    return Tipo::DESCONHECIDO; 
+    Simbolo vazio;
+    return vazio;
 }
 
 bool TabelaDeSimbolos::existe(const std::string& nome) const {
-    // rbegin() a rend() faz o loop rodar de trás pra frente do escopo mais interno pro mais externo
     for (auto it = pilha_tabelas.rbegin(); it != pilha_tabelas.rend(); ++it) {
         if (it->count(nome) > 0) {
-            return true; // Achou em algum escopo!
+            return true; // Achou!
         }
     }
-    return false; // Não existe em lugar nenhum
+    return false;
 }
 
 void TabelaDeSimbolos::imprimir() const {
     std::cerr << "\n--- Estado Atual da Tabela de Simbolos ---\n";
-    // Percorre todos os escopos, do mais antigo ao mais novo
     for (size_t i = 0; i < pilha_tabelas.size(); ++i) {
         std::cerr << "Escopo Nivel " << i << ":\n";
         if (pilha_tabelas[i].empty()) {
             std::cerr << "  (vazio)\n";
         } else {
             for (const auto& par : pilha_tabelas[i]) {
-                std::cerr << "  - " << par.first << " : " << tipoParaString(par.second) << "\n";
+                std::cerr << "  - " << par.first << " : " << tipoParaString(par.second.tipo)
+                          << (par.second.eh_funcao ? " [funcao]" : "")
+                          << (par.second.eh_vetor ? " [vetor]" : "")
+                          << (par.second.eh_matriz ? " [matriz]" : "") << "\n";
             }
         }
     }

@@ -1,0 +1,6 @@
+/* TESTE 15 - Erro de Dimensoes de Matriz
+   Garante que o compilador detecte acessos invalidos a matrizes. */
+
+int m[2][3];
+int val;
+val = m[1]; // Erro Semantico: m[1] exige dois indices por ser uma matriz

@@ -1,0 +1,66 @@
+/* TESTE 13 - Novas funcionalidades da Etapa 3
+   Testa funções, matrizes 1D e 2D, inicialização inline,
+   operadores compostos, unários, enums e slices. */
+
+/* 1. Enumeração */
+enum Estado { OFF, ON };
+
+/* 2. Declaração de funções */
+int duplicar(int x) {
+    int res = x * 2;
+    return res;
+}
+
+void print_status(int st) {
+    if (st == 1) {
+        write("Estado: LIGADO");
+    } else {
+        write("Estado: DESLIGADO");
+    }
+}
+
+/* 3. Inicializações inline de variáveis e vetores */
+int a = 5, b = 10, c;
+int v[5] = {10, 20, 30, 40, 50};
+int m[2][3] = {{1, 2, 3}, {4, 5, 6}};
+
+/* Variável com tipo enum */
+Estado est = ON;
+Estado est2 = OFF;
+
+/* Main code */
+write(a);
+write(b);
+
+/* 4. Operadores compostos */
+a += 2;
+write(a); // deve ser 7
+b -= 3;
+write(b); // deve ser 7
+
+/* 5. Operadores unários */
+a++;
+write(a); // deve ser 8
+--a;
+write(a); // deve ser 7
+
+/* 6. Acesso e escrita de matrizes/vetores */
+write(v[2]); // deve ser 30
+write(m[1][1]); // deve ser 5
+
+/* 7. Funções */
+c = duplicar(a);
+write(c); // deve ser 14
+
+print_status((int)est);
+print_status((int)est2);
+
+/* 8. Slices */
+int dest[3];
+dest = v[1:4]; // copia v[1..3] (20, 30, 40) para dest[0..2]
+write(dest[0]); // deve ser 20
+write(dest[1]); // deve ser 30
+write(dest[2]); // deve ser 40
+
+/* Escrita direta de slice */
+write(v[1:4]); // deve exibir [20, 30, 40]

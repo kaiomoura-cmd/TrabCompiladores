@@ -1,0 +1,9 @@
+/* TESTE 16 - Erro de Chamada de Função
+   Garante que o compilador detecte argumentos invalidos em chamadas. */
+
+int somar(int x, int y) {
+    return x + y;
+}
+
+int res;
+res = somar(5, "Erro"); // Erro Semantico: argumento 2 espera int, recebe string

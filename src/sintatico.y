@@ -3,24 +3,47 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <unordered_set>
+#include <algorithm>
 
 #include "simbolos.h"
 #include "temporarios.h"
 
 int yylex();
 void yyerror(const char *s);
-extern FILE* yyin; // variável global do Flex que controla a fonte de leitura
-
-struct Atributo {
-    char* nome;
-    int tipo;
-};
+extern FILE* yyin; 
+extern int yylineno; // Flex line counter
 
 TabelaDeSimbolos tabela;
 GeradorDeTemporarios gerador;
 DeclaracaoDeMemoria declarador;
-std::vector<std::string> buffer_decls;   // Fix 4: declaracoes ficam no topo
-std::vector<std::string> buffer_codigo;
+
+// Buffers do Main (Global)
+std::vector<std::string> buffer_decls_global;
+std::vector<std::string> buffer_codigo_global;
+
+// Buffers de Função
+std::vector<std::string> buffer_decls_funcao;
+std::vector<std::string> buffer_codigo_funcao;
+
+// Ponteiros de Buffer Dinâmicos (redirecionam codegen se dentro de função)
+std::vector<std::string>* buffer_decls_atual = &buffer_decls_global;
+std::vector<std::string>* buffer_atual = &buffer_codigo_global;
+
+#define buffer_decls (*buffer_decls_atual)
+#define buffer_codigo (*buffer_atual)
+
+// Outros buffers globais
+std::vector<std::string> buffer_funcoes_global;
+std::vector<std::string> buffer_enums_global;
+
+std::unordered_set<std::string> tabela_enums;
+Tipo tipo_declaracao_atual;
+
+bool dentro_de_funcao = false;
+std::string nome_funcao_atual = "";
+Tipo tipo_retorno_atual = Tipo::VOID;
+std::string params_c_atual = "";
 
 // ─── Gerador de Labels (L1, L2, L3, ...) ──────────────────────────────────
 static int contador_labels = 0;
@@ -31,25 +54,12 @@ std::string novoLabel() {
 // ─── Contador de profundidade de laço (para validar break/continue) ────────
 static int nivel_laco = 0;
 
-// ─── Pilhas globais de labels (usadas pelas regras de fluxo de controle) ────
-// Evitamos $<str>$ intermediários que corrompem o valor no Bison.
-std::vector<std::string> pilha_labels_fim;   // Label de saída de if (APENAS if/else)
-std::vector<std::string> pilha_labels_ini;   // Label de início de while/for (retorno do goto)
+std::vector<std::string> pilha_labels_fim;   
+std::vector<std::string> pilha_labels_ini;   
+std::vector<std::string> pilha_laco_fim;   
+std::vector<std::string> pilha_laco_ini;   
 
-// Pilhas EXCLUSIVAS para laços — usadas por break e continue.
-// Separadas das pilhas do if para que break/continue dentro de um if
-// aninhado num laço aponte corretamente para o laço, não para o if.
-std::vector<std::string> pilha_laco_fim;   // Label de saída do laço (break)
-std::vector<std::string> pilha_laco_ini;   // Label de início do laço (continue)
-
-// Buffer temporário para guardar o código de incremento do for
-// (o incr_for é parseado antes do corpo, mas deve ser emitido depois)
 std::vector<std::string> buffer_incr_for;
-
-Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2);
-void gera_codigo_atribuicao(char* id, char* n_exp);
-Atributo gera_codigo_casting(int tipo_destino, char* n_exp);
-void faz_atribuicao(char* id, int tipo_destino, char* n_exp, int tipo_exp);
 
 char* copia_string(const std::string& str) {
     char* cstr = new char[str.length() + 1];
@@ -58,21 +68,51 @@ char* copia_string(const std::string& str) {
 }
 %}
 
+%code requires {
+#include <string>
+#include <vector>
+#include "simbolos.h"
+
+struct Atributo {
+    char* nome;
+    int tipo;
+};
+
+struct Param {
+    std::string nome;
+    Tipo tipo;
+};
+}
+
+%code {
+// Declarações adicionais de funções auxiliares após a definição do YYSTYPE
+Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2);
+void gera_codigo_atribuicao(char* id, char* n_exp);
+Atributo gera_codigo_casting(int tipo_destino, char* n_exp);
+void faz_atribuicao(char* id, int tipo_destino, char* n_exp, int tipo_exp);
+}
+
 %union {
     char* str;
-    struct {
-        char* nome;
-        int tipo;
-    } info;
+    Atributo info;
+    int int_val;
+    std::vector<Param>* param_list;
+    std::vector<Atributo>* arg_list;
+    std::vector<std::string>* str_list;
+    std::vector<std::vector<Atributo>*>* matrix_list;
+    Param* param_val;
 }
 
 %token <str> ID NUM_INTEIRO NUM_REAL LITERAL_CHAR LITERAL_STRING
-%token T_INT T_FLOAT T_BOOL T_CHAR T_STRING';'
+%token T_INT T_FLOAT T_BOOL T_CHAR T_STRING
 %token SOM SUB MULT DIV ATRIB ABRE_PAR FECHA_PAR
 %token MAIOR MENOR MAIOR_IGUAL MENOR_IGUAL IGUAL DIFERENTE E_LOGICO OU_LOGICO NEGACAO
 %token TRUE FALSE
 %token READ WRITE
 %token IF ELSE WHILE FOR SWITCH CASE DEFAULT BREAK CONTINUE
+%token T_VOID RETURN ENUM
+%token MAIS_ATRIB MENOS_ATRIB MULT_ATRIB DIV_ATRIB
+%token INC DEC
 
 /* Resolução do conflito clássico do dangling-else */
 %nonassoc SEM_ELSE
@@ -85,147 +125,297 @@ char* copia_string(const std::string& str) {
 %left MAIOR MENOR MAIOR_IGUAL MENOR_IGUAL
 %left SOM SUB
 %left MULT DIV
-%right NEGACAO
-%left ABRE_PAR FECHA_PAR
+%right NEGACAO INC DEC UNARY
+%left ABRE_PAR FECHA_PAR '[' ']'
 
-%type <info> expressao
+%type <info> expressao lvalue
 %type <str>  label_if label_while_inicio label_for_inicio
+%type <int_val> tipo
+%type <param_list> parametros_op lista_parametros
+%type <arg_list> argumentos_op lista_argumentos lista_valores
+%type <str_list> lista_identificadores
+%type <matrix_list> lista_linhas_matriz
+%type <param_val> parametro
 
 %%
 
 programa: 
-    | programa comando
+    | programa elemento
     ;
 
+elemento:
+      funcao
+    | comando
+    ;
 
 comando:
-    /* Declaracao simples: int x; */
-    T_INT ID ';' {
-          tabela.inserir(std::string($2), Tipo::INT);
-          buffer_decls.push_back("int " + std::string($2) + ";");
-      }
-    | T_FLOAT ID ';' {
-          tabela.inserir(std::string($2), Tipo::FLOAT);
-          buffer_decls.push_back("float " + std::string($2) + ";");
-      }
-    | T_BOOL ID ';' {
-          tabela.inserir(std::string($2), Tipo::BOOL);
-          buffer_decls.push_back("int " + std::string($2) + "; /* bool */");
-      }
-    | T_CHAR ID ';' {
-          tabela.inserir(std::string($2), Tipo::CHAR);
-          buffer_decls.push_back("char " + std::string($2) + ";");
-      }
-    | T_STRING ID ';' {
-          tabela.inserir(std::string($2), Tipo::STRING);
-          buffer_decls.push_back("char " + std::string($2) + "[256]; /* string */");
-      }
-    /* Fix 2: Declaracao com atribuicao: int x = expr; */
-    | T_INT ID ATRIB expressao ';' {
-          if ($4.tipo != 0) {
-              yyerror("Erro Semantico: Tipo incompativel na declaracao de int.");
-              exit(1);
-          }
-          tabela.inserir(std::string($2), Tipo::INT);
-          buffer_decls.push_back("int " + std::string($2) + ";");
-          buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
-      }
-    | T_FLOAT ID ATRIB expressao ';' {
-          tabela.inserir(std::string($2), Tipo::FLOAT);
-          buffer_decls.push_back("float " + std::string($2) + ";");
-          if ($4.tipo == 1) {
-              buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
-          } else if ($4.tipo == 0) {
-              std::string t_conv = gerador.novoTemporario();
-              buffer_codigo.push_back(t_conv + " = (float) " + std::string($4.nome) + ";");
-              buffer_codigo.push_back(std::string($2) + " = " + t_conv + ";");
-          } else {
-              yyerror("Erro Semantico: Tipo incompativel na declaracao de float.");
-              exit(1);
-          }
-      }
-    | T_BOOL ID ATRIB expressao ';' {
-          if ($4.tipo != 2) {
-              yyerror("Erro Semantico: Tipo incompativel na declaracao de bool.");
-              exit(1);
-          }
-          tabela.inserir(std::string($2), Tipo::BOOL);
-          buffer_decls.push_back("int " + std::string($2) + "; /* bool */");
-          buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
-      }
-    | T_CHAR ID ATRIB expressao ';' {
-          if ($4.tipo != 3) {
-              yyerror("Erro Semantico: Tipo incompativel na declaracao de char.");
-              exit(1);
-          }
-          tabela.inserir(std::string($2), Tipo::CHAR);
-          buffer_decls.push_back("char " + std::string($2) + ";");
-          buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
-      }
-    | ID ATRIB expressao ';' { 
-            std::string nome_str($1);
-
-            // 1. Checa se a variável de destino existe na Tabela de Símbolos
-            if (!tabela.existe(nome_str)) {
-                std::string msg = "Erro Semantico: Variavel nao declarada: " + nome_str;
-                yyerror(msg.c_str());
-                exit(1);
-            }
-
-            // 2. Descobre o tipo numérico interno da variável que vai receber o valor
-            Tipo tipo_real = tabela.buscar(nome_str);
-            int tipo_destino = -1;
-            
-            if (tipo_real == Tipo::INT) tipo_destino = 0;
-            else if (tipo_real == Tipo::FLOAT) tipo_destino = 1;
-            else if (tipo_real == Tipo::BOOL) tipo_destino = 2;
-            else if (tipo_real == Tipo::CHAR) tipo_destino = 3;
-            else if (tipo_real == Tipo::STRING) tipo_destino = 4;
-
-            // 3. Aplica a Filosofia Java/C# (Tipagem Forte)
-            if (tipo_destino == $3.tipo) {
-                // Regra A: Tipos idênticos (ex: int recebe int). Atribuição direta!
-                if (tipo_destino == 4) {
-                    buffer_codigo.push_back("strcpy(" + std::string($1) + ", " + std::string($3.nome) + ");");
-                } else {
-                    gera_codigo_atribuicao($1, $3.nome);
-                }
-            } 
-            else if (tipo_destino == 1 && $3.tipo == 0) {
-                // Regra B: Coerção Segura (Widening). Guardando um 'int' em um espaço 'float'.
-                std::string t_conv = gerador.novoTemporario();
-                buffer_codigo.push_back(t_conv + " = (float) " + std::string($3.nome) + ";");
-                
-                // Atribui o temporário que foi convertido para float à variável de destino
-                gera_codigo_atribuicao($1, copia_string(t_conv));
-            } 
-            else {
-                // Regra C: Mistura proibida! (ex: float em int, char em bool, etc).
-                std::string msg = "Erro Semantico: Tipos incompativeis na atribuicao para a variavel '" + nome_str + "'.";
-                yyerror(msg.c_str());
-                exit(1);
-            }
+    /* Declaracao de enums */
+    ENUM ID '{' lista_identificadores '}' ';' {
+        std::string enum_nome($2);
+        tabela_enums.insert(enum_nome);
+        std::vector<std::string>* ids = $4;
+        std::string c_enum = "enum " + enum_nome + " { ";
+        for (size_t i = 0; i < ids->size(); ++i) {
+            std::string id_nome = (*ids)[i];
+            Simbolo simb;
+            simb.nome = id_nome;
+            simb.tipo = Tipo::INT;
+            simb.eh_enum_const = true;
+            simb.valor_enum = (int)i;
+            simb.nome_enum_tipo = enum_nome;
+            tabela.inserirSimbolo(id_nome, simb);
+            if (i > 0) c_enum += ", ";
+            c_enum += id_nome;
         }
-    | READ ABRE_PAR ID FECHA_PAR ';' {
-            std::string nome_str($3);
-            if (!tabela.existe(nome_str)) {
-                std::string msg = "Erro Semantico: Variavel '" + nome_str +
-                                  "' nao declarada. Declare antes de usar em read().";
-                yyerror(msg.c_str());
+        c_enum += " };";
+        buffer_enums_global.push_back(c_enum);
+        delete ids;
+    }
+    /* Declaracao inline múltipla */
+    | tipo lista_declaracoes ';'
+    /* Declaracao de vetor (1D) simples */
+    | tipo ID '[' NUM_INTEIRO ']' ';' {
+        std::string nome_var($2);
+        int dim = std::stoi($4);
+        Tipo t = (Tipo)$1;
+        Simbolo simb;
+        simb.nome = nome_var;
+        simb.tipo = t;
+        simb.eh_vetor = true;
+        simb.dim1 = dim;
+        tabela.inserirSimbolo(nome_var, simb);
+        buffer_decls.push_back(tipoParaString(t) + " " + nome_var + "[" + std::to_string(dim) + "];");
+    }
+    /* Declaracao de matriz (2D) simples */
+    | tipo ID '[' NUM_INTEIRO ']' '[' NUM_INTEIRO ']' ';' {
+        std::string nome_var($2);
+        int dim1 = std::stoi($4);
+        int dim2 = std::stoi($7);
+        Tipo t = (Tipo)$1;
+        Simbolo simb;
+        simb.nome = nome_var;
+        simb.tipo = t;
+        simb.eh_matriz = true;
+        simb.dim1 = dim1;
+        simb.dim2 = dim2;
+        tabela.inserirSimbolo(nome_var, simb);
+        buffer_decls.push_back(tipoParaString(t) + " " + nome_var + "[" + std::to_string(dim1) + "][" + std::to_string(dim2) + "];");
+    }
+    /* Declaracao de vetor inicializado */
+    | tipo ID '[' NUM_INTEIRO ']' ATRIB '{' lista_valores '}' ';' {
+        std::string nome_var($2);
+        int dim = std::stoi($4);
+        Tipo t = (Tipo)$1;
+        std::vector<Atributo>* vals = $8;
+        if (vals->size() > (size_t)dim) {
+            yyerror("Erro Semantico: Inicializadores excedem o tamanho do vetor.");
+            exit(1);
+        }
+        std::string init_str = "";
+        for (size_t i = 0; i < vals->size(); ++i) {
+            if (i > 0) init_str += ", ";
+            if (t != (Tipo)(*vals)[i].tipo) {
+                yyerror("Erro Semantico: Inicializador com tipo incompativel.");
                 exit(1);
             }
-            Tipo tipo_real = tabela.buscar(nome_str);
+            init_str += (*vals)[i].nome;
+        }
+        Simbolo simb;
+        simb.nome = nome_var;
+        simb.tipo = t;
+        simb.eh_vetor = true;
+        simb.dim1 = dim;
+        tabela.inserirSimbolo(nome_var, simb);
+        buffer_decls.push_back(tipoParaString(t) + " " + nome_var + "[" + std::to_string(dim) + "] = {" + init_str + "};");
+        delete vals;
+    }
+    /* Declaracao de matriz inicializada */
+    | tipo ID '[' NUM_INTEIRO ']' '[' NUM_INTEIRO ']' ATRIB '{' lista_linhas_matriz '}' ';' {
+        std::string nome_var($2);
+        int dim1 = std::stoi($4);
+        int dim2 = std::stoi($7);
+        Tipo t = (Tipo)$1;
+        std::vector<std::vector<Atributo>*>* linhas = $11;
+        if (linhas->size() > (size_t)dim1) {
+            yyerror("Erro Semantico: Numero de linhas maior que dim1.");
+            exit(1);
+        }
+        std::string init_str = "";
+        for (size_t r = 0; r < linhas->size(); ++r) {
+            std::vector<Atributo>* cols = (*linhas)[r];
+            if (cols->size() > (size_t)dim2) {
+                yyerror("Erro Semantico: Numero de colunas maior que dim2.");
+                exit(1);
+            }
+            if (r > 0) init_str += ", ";
+            init_str += "{";
+            for (size_t c = 0; c < cols->size(); ++c) {
+                if (c > 0) init_str += ", ";
+                if (t != (Tipo)(*cols)[c].tipo) {
+                    yyerror("Erro Semantico: Tipo de valor invalido na inicializacao da matriz.");
+                    exit(1);
+                }
+                init_str += (*cols)[c].nome;
+            }
+            init_str += "}";
+            delete cols;
+        }
+        Simbolo simb;
+        simb.nome = nome_var;
+        simb.tipo = t;
+        simb.eh_matriz = true;
+        simb.dim1 = dim1;
+        simb.dim2 = dim2;
+        tabela.inserirSimbolo(nome_var, simb);
+        buffer_decls.push_back(tipoParaString(t) + " " + nome_var + "[" + std::to_string(dim1) + "][" + std::to_string(dim2) + "] = {" + init_str + "};");
+        delete linhas;
+    }
+    /* Atribuicao padrao */
+    | lvalue ATRIB expressao ';' {
+        std::string lval_nome($1.nome);
+        int tipo_dest = $1.tipo;
+        if (tipo_dest == $3.tipo) {
+            if (tipo_dest == 4) {
+                buffer_codigo.push_back("strcpy(" + lval_nome + ", " + std::string($3.nome) + ");");
+            } else {
+                buffer_codigo.push_back(lval_nome + " = " + std::string($3.nome) + ";");
+            }
+        } else if (tipo_dest == 1 && $3.tipo == 0) {
+            std::string t_conv = gerador.novoTemporario();
+            buffer_codigo.push_back(t_conv + " = (float) " + std::string($3.nome) + ";");
+            buffer_codigo.push_back(lval_nome + " = " + t_conv + ";");
+        } else {
+            yyerror("Erro Semantico: Tipos incompativeis na atribuicao.");
+            exit(1);
+        }
+    }
+    /* Atribuicao de Slice */
+    | lvalue ATRIB ID '[' expressao ':' expressao ']' ';' {
+        std::string dest($1.nome);
+        std::string src($3);
+        if (!tabela.existe(src)) {
+            yyerror("Erro Semantico: Vetor nao encontrado.");
+            exit(1);
+        }
+        Simbolo simb_src = tabela.buscarSimbolo(src);
+        if (!simb_src.eh_vetor) {
+            yyerror("Erro Semantico: Slice exige vetor de origem.");
+            exit(1);
+        }
+        std::string dest_var = dest;
+        size_t brk = dest_var.find('[');
+        if (brk != std::string::npos) dest_var = dest_var.substr(0, brk);
+        Simbolo simb_dest = tabela.buscarSimbolo(dest_var);
+        if (!simb_dest.eh_vetor) {
+            yyerror("Erro Semantico: Atribuicao de slice exige vetor de destino.");
+            exit(1);
+        }
+        if ($5.tipo != 0 || $7.tipo != 0) {
+            yyerror("Erro Semantico: Indices do slice devem ser inteiros.");
+            exit(1);
+        }
+        if (simb_src.tipo != simb_dest.tipo) {
+            yyerror("Erro Semantico: Tipo do slice incompativel com o destino.");
+            exit(1);
+        }
+        std::string t_sl = gerador.novoTemporario();
+        std::string t_lim = gerador.novoTemporario();
+        buffer_codigo.push_back(t_lim + " = " + std::string($7.nome) + " - " + std::string($5.nome) + ";");
+        buffer_codigo.push_back("for (int " + t_sl + " = 0; " + t_sl + " < " + t_lim + "; " + t_sl + "++) {");
+        buffer_codigo.push_back("    " + dest_var + "[" + t_sl + "] = " + src + "[" + std::string($5.nome) + " + " + t_sl + "];");
+        buffer_codigo.push_back("}");
+    }
+    /* Operadores compostos */
+    | lvalue MAIS_ATRIB expressao ';' {
+        Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "+", $3.nome, $3.tipo);
+        faz_atribuicao($1.nome, $1.tipo, res.nome, res.tipo);
+    }
+    | lvalue MENOS_ATRIB expressao ';' {
+        Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "-", $3.nome, $3.tipo);
+        faz_atribuicao($1.nome, $1.tipo, res.nome, res.tipo);
+    }
+    | lvalue MULT_ATRIB expressao ';' {
+        Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "*", $3.nome, $3.tipo);
+        faz_atribuicao($1.nome, $1.tipo, res.nome, res.tipo);
+    }
+    | lvalue DIV_ATRIB expressao ';' {
+        Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "/", $3.nome, $3.tipo);
+        faz_atribuicao($1.nome, $1.tipo, res.nome, res.tipo);
+    }
+    /* Unários como Instruções */
+    | lvalue INC ';' {
+        if ($1.tipo != 0 && $1.tipo != 1) {
+            yyerror("Erro Semantico: Incremento invalido.");
+            exit(1);
+        }
+        buffer_codigo.push_back(std::string($1.nome) + "++;");
+    }
+    | lvalue DEC ';' {
+        if ($1.tipo != 0 && $1.tipo != 1) {
+            yyerror("Erro Semantico: Decremento invalido.");
+            exit(1);
+        }
+        buffer_codigo.push_back(std::string($1.nome) + "--;");
+    }
+    | INC lvalue ';' {
+        if ($2.tipo != 0 && $2.tipo != 1) {
+            yyerror("Erro Semantico: Incremento invalido.");
+            exit(1);
+        }
+        buffer_codigo.push_back("++" + std::string($2.nome) + ";");
+    }
+    | DEC lvalue ';' {
+        if ($2.tipo != 0 && $2.tipo != 1) {
+            yyerror("Erro Semantico: Decremento invalido.");
+            exit(1);
+        }
+        buffer_codigo.push_back("--" + std::string($2.nome) + ";");
+    }
+    /* Retorno de Funções */
+    | RETURN expressao ';' {
+        if (!dentro_de_funcao) {
+            yyerror("Erro Semantico: 'return' fora de funcao.");
+            exit(1);
+        }
+        if (tipo_retorno_atual == Tipo::VOID) {
+            yyerror("Erro Semantico: Funcao void nao deve retornar valor.");
+            exit(1);
+        }
+        if (tipo_retorno_atual == (Tipo)$2.tipo) {
+            buffer_codigo.push_back("return " + std::string($2.nome) + ";");
+        } else if (tipo_retorno_atual == Tipo::FLOAT && $2.tipo == 0) {
+            std::string t_conv = gerador.novoTemporario();
+            buffer_codigo.push_back(t_conv + " = (float) " + std::string($2.nome) + ";");
+            buffer_codigo.push_back("return " + t_conv + ";");
+        } else {
+            yyerror("Erro Semantico: Tipo de retorno incompativel.");
+            exit(1);
+        }
+    }
+    | RETURN ';' {
+        if (!dentro_de_funcao) {
+            yyerror("Erro Semantico: 'return' fora de funcao.");
+            exit(1);
+        }
+        if (tipo_retorno_atual != Tipo::VOID) {
+            yyerror("Erro Semantico: Funcao nao-void deve retornar valor.");
+            exit(1);
+        }
+        buffer_codigo.push_back("return;");
+    }
+    | READ ABRE_PAR lvalue FECHA_PAR ';' {
+            std::string nome_str($3.nome);
+            Tipo tipo_real = (Tipo)$3.tipo;
             std::string fmt = "%d";
             std::string extra_space = "";
             if (tipo_real == Tipo::FLOAT) {
                 fmt = "%f";
             } else if (tipo_real == Tipo::CHAR) {
                 fmt = "%c";
-                extra_space = " "; // Ignora whitespace pendente (ex: newlines)
+                extra_space = " ";
             } else if (tipo_real == Tipo::STRING) {
                 fmt = "%s";
             }
-            
             if (tipo_real == Tipo::STRING) {
                 buffer_codigo.push_back("scanf(\"" + fmt + "\", " + nome_str + ");");
             } else {
@@ -243,6 +433,38 @@ comando:
             }
             buffer_codigo.push_back("printf(\"" + fmt + "\", " + std::string($3.nome) + ");");
         }
+    /* Escrita de Slices */
+    | WRITE ABRE_PAR ID '[' expressao ':' expressao ']' FECHA_PAR ';' {
+        std::string src($3);
+        if (!tabela.existe(src)) {
+            yyerror("Erro Semantico: Vetor nao encontrado.");
+            exit(1);
+        }
+        Simbolo simb = tabela.buscarSimbolo(src);
+        if (!simb.eh_vetor) {
+            yyerror("Erro Semantico: Exige vetor.");
+            exit(1);
+        }
+        if ($5.tipo != 0 || $7.tipo != 0) {
+            yyerror("Erro Semantico: Indices do slice devem ser inteiros.");
+            exit(1);
+        }
+        std::string t_sl = gerador.novoTemporario();
+        std::string t_lim = gerador.novoTemporario();
+        buffer_codigo.push_back(t_lim + " = " + std::string($7.nome) + " - " + std::string($5.nome) + ";");
+        buffer_codigo.push_back("printf(\"[\");");
+        buffer_codigo.push_back("for (int " + t_sl + " = 0; " + t_sl + " < " + t_lim + "; " + t_sl + "++) {");
+        buffer_codigo.push_back("    if (" + t_sl + " > 0) printf(\", \");");
+        if (simb.tipo == Tipo::INT) {
+            buffer_codigo.push_back("    printf(\"%d\", " + src + "[" + std::string($5.nome) + " + " + t_sl + "]);");
+        } else if (simb.tipo == Tipo::FLOAT) {
+            buffer_codigo.push_back("    printf(\"%f\", " + src + "[" + std::string($5.nome) + " + " + t_sl + "]);");
+        } else if (simb.tipo == Tipo::CHAR) {
+            buffer_codigo.push_back("    printf(\"%c\", " + src + "[" + std::string($5.nome) + " + " + t_sl + "]);");
+        }
+        buffer_codigo.push_back("}");
+        buffer_codigo.push_back("printf(\"]\\n\");");
+    }
     | cmd_if
     | cmd_while
     | cmd_for
@@ -589,122 +811,502 @@ cmd_default:
     } comandos_bloco
     ;
 
+lvalue:
+      ID {
+        std::string nome_str($1);
+        $$.nome = copia_string(nome_str);
+        if (tabela.existe(nome_str)) {
+            Simbolo simb = tabela.buscarSimbolo(nome_str);
+            if (simb.eh_enum_const) {
+                $$.nome = copia_string(std::to_string(simb.valor_enum));
+                $$.tipo = 0;
+            } else {
+                $$.tipo = (int)simb.tipo;
+            }
+        } else {
+            std::string msg = "Erro Semantico: Variavel nao declarada: " + nome_str;
+            yyerror(msg.c_str());
+            exit(1);
+        }
+      }
+    | ID '[' expressao ']' {
+        std::string nome_str($1);
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
+        if (!simb.eh_vetor) {
+            yyerror("Erro Semantico: Variavel nao e um vetor.");
+            exit(1);
+        }
+        if ($3.tipo != 0) {
+            yyerror("Erro Semantico: Indice do vetor deve ser do tipo int.");
+            exit(1);
+        }
+        $$.tipo = (int)simb.tipo;
+        $$.nome = copia_string(nome_str + "[" + std::string($3.nome) + "]");
+      }
+    | ID '[' expressao ']' '[' expressao ']' {
+        std::string nome_str($1);
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
+        if (!simb.eh_matriz) {
+            yyerror("Erro Semantico: Variavel nao e uma matriz.");
+            exit(1);
+        }
+        if ($3.tipo != 0 || $6.tipo != 0) {
+            yyerror("Erro Semantico: Indices da matriz devem ser do tipo int.");
+            exit(1);
+        }
+        $$.tipo = (int)simb.tipo;
+        $$.nome = copia_string(nome_str + "[" + std::string($3.nome) + "][" + std::string($6.nome) + "]");
+      }
+    ;
+
+tipo:
+      T_INT { tipo_declaracao_atual = Tipo::INT; $$ = 0; }
+    | T_FLOAT { tipo_declaracao_atual = Tipo::FLOAT; $$ = 1; }
+    | T_BOOL { tipo_declaracao_atual = Tipo::BOOL; $$ = 2; }
+    | T_CHAR { tipo_declaracao_atual = Tipo::CHAR; $$ = 3; }
+    | T_STRING { tipo_declaracao_atual = Tipo::STRING; $$ = 4; }
+    | ID {
+        std::string nome_tipo($1);
+        if (tabela_enums.count(nome_tipo) > 0) {
+            tipo_declaracao_atual = Tipo::INT;
+            $$ = 0;
+        } else {
+            std::string msg = "Erro Semantico: Tipo nao reconhecido: " + nome_tipo;
+            yyerror(msg.c_str());
+            exit(1);
+        }
+    }
+    ;
+
+
+lista_identificadores:
+      ID {
+        $$ = new std::vector<std::string>();
+        $$->push_back(std::string($1));
+      }
+    | lista_identificadores ',' ID {
+        $$ = $1;
+        $$->push_back(std::string($3));
+      }
+    ;
+
+lista_declaracoes:
+      declaracao_item
+    | lista_declaracoes ',' declaracao_item
+    ;
+
+declaracao_item:
+      ID {
+        Tipo t = tipo_declaracao_atual;
+        tabela.inserir(std::string($1), t);
+        if (t == Tipo::STRING) {
+            buffer_decls.push_back("char " + std::string($1) + "[256]; /* string */");
+        } else if (t == Tipo::BOOL) {
+            buffer_decls.push_back("int " + std::string($1) + "; /* bool */");
+        } else {
+            buffer_decls.push_back(tipoParaString(t) + " " + std::string($1) + ";");
+        }
+      }
+    | ID ATRIB expressao {
+        Tipo t = tipo_declaracao_atual;
+        tabela.inserir(std::string($1), t);
+        if (t == Tipo::STRING) {
+            buffer_decls.push_back("char " + std::string($1) + "[256]; /* string */");
+            if ($3.tipo == 4) {
+                buffer_codigo.push_back("strcpy(" + std::string($1) + ", " + std::string($3.nome) + ");");
+            } else {
+                yyerror("Erro Semantico: Tipo incompativel para string.");
+                exit(1);
+            }
+        } else if (t == Tipo::BOOL) {
+            buffer_decls.push_back("int " + std::string($1) + "; /* bool */");
+            if ($3.tipo == 2) {
+                buffer_codigo.push_back(std::string($1) + " = " + std::string($3.nome) + ";");
+            } else {
+                yyerror("Erro Semantico: Tipo incompativel para bool.");
+                exit(1);
+            }
+        } else {
+            buffer_decls.push_back(tipoParaString(t) + " " + std::string($1) + ";");
+            if (t == (Tipo)$3.tipo) {
+                buffer_codigo.push_back(std::string($1) + " = " + std::string($3.nome) + ";");
+            } else if (t == Tipo::FLOAT && $3.tipo == 0) {
+                std::string t_conv = gerador.novoTemporario();
+                buffer_codigo.push_back(t_conv + " = (float) " + std::string($3.nome) + ";");
+                buffer_codigo.push_back(std::string($1) + " = " + t_conv + ";");
+            } else {
+                yyerror("Erro Semantico: Tipo incompativel na declaracao.");
+                exit(1);
+            }
+        }
+      }
+    ;
+
+lista_valores:
+      expressao {
+        $$ = new std::vector<Atributo>();
+        $$->push_back($1);
+      }
+    | lista_valores ',' expressao {
+        $$ = $1;
+        $$->push_back($3);
+      }
+    ;
+
+lista_linhas_matriz:
+      '{' lista_valores '}' {
+        $$ = new std::vector<std::vector<Atributo>*>();
+        $$->push_back($2);
+      }
+    | lista_linhas_matriz ',' '{' lista_valores '}' {
+        $$ = $1;
+        $$->push_back($4);
+      }
+    ;
+
+funcao_cabecalho:
+      tipo ID ABRE_PAR parametros_op FECHA_PAR {
+        std::string nome_func($2);
+        Tipo ret_tipo = (Tipo)$1;
+        std::vector<Param>* params = $4;
+        
+        Simbolo simb_func;
+        simb_func.nome = nome_func;
+        simb_func.eh_funcao = true;
+        simb_func.tipo_retorno = ret_tipo;
+        simb_func.tipo = ret_tipo;
+        for (const auto& p : *params) {
+            simb_func.tipos_parametros.push_back(p.tipo);
+        }
+        tabela.inserirSimbolo(nome_func, simb_func);
+        
+        tabela.entrarEscopo();
+        
+        std::string params_c = "";
+        for (size_t i = 0; i < params->size(); ++i) {
+            const auto& p = (*params)[i];
+            tabela.inserir(p.nome, p.tipo);
+            if (i > 0) params_c += ", ";
+            if (p.tipo == Tipo::STRING) {
+                params_c += "char* " + p.nome;
+            } else {
+                params_c += tipoParaString(p.tipo) + " " + p.nome;
+            }
+        }
+        params_c_atual = params_c;
+        
+        dentro_de_funcao = true;
+        nome_funcao_atual = nome_func;
+        tipo_retorno_atual = ret_tipo;
+        
+        buffer_decls_funcao.clear();
+        buffer_codigo_funcao.clear();
+        gerador.reiniciar();
+        
+        buffer_atual = &buffer_codigo_funcao;
+        buffer_decls_atual = &buffer_decls_funcao;
+        
+        delete params;
+      }
+    | T_VOID ID ABRE_PAR parametros_op FECHA_PAR {
+        std::string nome_func($2);
+        Tipo ret_tipo = Tipo::VOID;
+        std::vector<Param>* params = $4;
+        
+        Simbolo simb_func;
+        simb_func.nome = nome_func;
+        simb_func.eh_funcao = true;
+        simb_func.tipo_retorno = ret_tipo;
+        simb_func.tipo = ret_tipo;
+        for (const auto& p : *params) {
+            simb_func.tipos_parametros.push_back(p.tipo);
+        }
+        tabela.inserirSimbolo(nome_func, simb_func);
+        
+        tabela.entrarEscopo();
+        
+        std::string params_c = "";
+        for (size_t i = 0; i < params->size(); ++i) {
+            const auto& p = (*params)[i];
+            tabela.inserir(p.nome, p.tipo);
+            if (i > 0) params_c += ", ";
+            if (p.tipo == Tipo::STRING) {
+                params_c += "char* " + p.nome;
+            } else {
+                params_c += tipoParaString(p.tipo) + " " + p.nome;
+            }
+        }
+        params_c_atual = params_c;
+        
+        dentro_de_funcao = true;
+        nome_funcao_atual = nome_func;
+        tipo_retorno_atual = ret_tipo;
+        
+        buffer_decls_funcao.clear();
+        buffer_codigo_funcao.clear();
+        gerador.reiniciar();
+        
+        buffer_atual = &buffer_codigo_funcao;
+        buffer_decls_atual = &buffer_decls_funcao;
+        
+        delete params;
+      }
+    ;
+
+funcao:
+    funcao_cabecalho '{' comandos_bloco '}' {
+        tabela.sairEscopo();
+        std::string func_code = tipoParaString(tipo_retorno_atual) + " " + nome_funcao_atual + "(" + params_c_atual + ") {\n";
+        
+        for (const auto& decl : buffer_decls_funcao) {
+            func_code += "    " + decl + "\n";
+        }
+        
+        std::vector<std::string> temps = gerador.getTemporarios();
+        if (!temps.empty()) {
+            func_code += "    /* --- declaracoes de temporarios --- */\n";
+            std::unordered_map<std::string, std::vector<std::string>> porTipo;
+            for (const auto& temp : temps) {
+                Tipo t = Tipo::INT;
+                if (tabela.existe(temp)) t = tabela.buscar(temp);
+                porTipo[tipoParaString(t)].push_back(temp);
+            }
+            for (const auto& ent : porTipo) {
+                func_code += "    " + ent.first + " ";
+                for (size_t i = 0; i < ent.second.size(); ++i) {
+                    if (i > 0) func_code += ", ";
+                    func_code += ent.second[i];
+                }
+                func_code += ";\n";
+            }
+        }
+        if (!buffer_decls_funcao.empty() || !temps.empty()) {
+            func_code += "\n";
+        }
+        for (const auto& ln : buffer_codigo_funcao) {
+            func_code += "    " + ln + "\n";
+        }
+        func_code += "}\n";
+        buffer_funcoes_global.push_back(func_code);
+        
+        dentro_de_funcao = false;
+        buffer_atual = &buffer_codigo_global;
+        buffer_decls_atual = &buffer_decls_global;
+        gerador.reiniciar();
+    }
+    ;
+
+parametros_op:
+      /* vazio */ { $$ = new std::vector<Param>(); }
+    | lista_parametros { $$ = $1; }
+    ;
+
+lista_parametros:
+      parametro {
+        $$ = new std::vector<Param>();
+        $$->push_back(*$1);
+        delete $1;
+      }
+    | lista_parametros ',' parametro {
+        $$ = $1;
+        $$->push_back(*$3);
+        delete $3;
+      }
+    ;
+
+parametro:
+      tipo ID {
+        $$ = new Param();
+        $$->nome = std::string($2);
+        $$->tipo = (Tipo)$1;
+      }
+    ;
+
+argumentos_op:
+      /* vazio */ { $$ = new std::vector<Atributo>(); }
+    | lista_argumentos { $$ = $1; }
+    ;
+
+lista_argumentos:
+      expressao {
+        $$ = new std::vector<Atributo>();
+        $$->push_back($1);
+      }
+    | lista_argumentos ',' expressao {
+        $$ = $1;
+        $$->push_back($3);
+      }
+    ;
+
 expressao: 
     NUM_INTEIRO { 
         $$.nome = copia_string(std::string($1));
-        $$.tipo = 0; // INT
+        $$.tipo = 0;
     }
     | NUM_REAL { 
         $$.nome = copia_string(std::string($1));
-        $$.tipo = 1; // FLOAT
+        $$.tipo = 1;
     }
     | LITERAL_CHAR { 
         $$.nome = copia_string(std::string($1));
-        $$.tipo = 3; // CHAR
+        $$.tipo = 3;
     }
     | LITERAL_STRING {
         $$.nome = copia_string(std::string($1));
-        $$.tipo = 4; // STRING
+        $$.tipo = 4;
     }
-    | TRUE { // Token para a palavra true
+    | TRUE { 
         $$.nome = copia_string("1");
-        $$.tipo = 2; // BOOL
+        $$.tipo = 2;
     }
-    | FALSE { // Token para a palavra false
+    | FALSE { 
         $$.nome = copia_string("0");
-        $$.tipo = 2; // BOOL
+        $$.tipo = 2;
     }
-    | ID { 
-        $$.nome = copia_string(std::string($1));
-        std::string nome_str($1);
-        
-        // 1. Verifica se a variável realmente existe na tabela
-        if (tabela.existe(nome_str)) {
-            
-            // 2. Busca o tipo real da variável
-            Tipo tipo_real = tabela.buscar(nome_str);
-            
-            // 3. Mapeia o Enum (Tipo) para o código inteiro usado no parser
-            if (tipo_real == Tipo::INT) {
-                $$.tipo = 0;
-            } else if (tipo_real == Tipo::FLOAT) {
-                $$.tipo = 1;
-            } else if (tipo_real == Tipo::BOOL) {
-                $$.tipo = 2;
-            } else if (tipo_real == Tipo::CHAR) {
-                $$.tipo = 3;
-            } else if (tipo_real == Tipo::STRING) {
-                $$.tipo = 4;
-            }
-            
-        } else {
-            // 4. Se não existe, aborta a compilação com Erro Semântico
-            std::string msg = "Erro Semantico: Variavel nao declarada: " + nome_str;
+    | lvalue { 
+        $$ = $1;
+    }
+    | ID ABRE_PAR argumentos_op FECHA_PAR {
+        std::string nome_func($1);
+        if (!tabela.existe(nome_func)) {
+            std::string msg = "Erro Semantico: Funcao nao declarada: " + nome_func;
             yyerror(msg.c_str());
-            exit(1); 
+            exit(1);
         }
+        Simbolo simb = tabela.buscarSimbolo(nome_func);
+        if (!simb.eh_funcao) {
+            std::string msg = "Erro Semantico: '" + nome_func + "' nao e funcao.";
+            yyerror(msg.c_str());
+            exit(1);
+        }
+        std::vector<Atributo>* args = $3;
+        if (args->size() != simb.tipos_parametros.size()) {
+            std::string msg = "Erro Semantico: Assinatura incorreta para '" + nome_func + "'.";
+            yyerror(msg.c_str());
+            exit(1);
+        }
+        std::string args_c = "";
+        for (size_t i = 0; i < args->size(); ++i) {
+            Tipo param_tipo = simb.tipos_parametros[i];
+            Atributo arg = (*args)[i];
+            std::string arg_nome = std::string(arg.nome);
+            if (param_tipo == (Tipo)arg.tipo) {
+                // Ok
+            } else if (param_tipo == Tipo::FLOAT && arg.tipo == 0) {
+                std::string t_conv = gerador.novoTemporario();
+                buffer_codigo.push_back(t_conv + " = (float) " + arg_nome + ";");
+                arg_nome = t_conv;
+            } else {
+                yyerror("Erro Semantico: Tipo de argumento incompativel.");
+                exit(1);
+            }
+            if (i > 0) args_c += ", ";
+            args_c += arg_nome;
+        }
+        $$.tipo = (int)simb.tipo_retorno;
+        if (simb.tipo_retorno != Tipo::VOID) {
+            std::string t_res = gerador.novoTemporario();
+            buffer_codigo.push_back(t_res + " = " + nome_func + "(" + args_c + ");");
+            $$.nome = copia_string(t_res);
+        } else {
+            buffer_codigo.push_back(nome_func + "(" + args_c + ");");
+            $$.nome = copia_string("");
+        }
+        delete args;
     }
-    
+    | lvalue INC {
+        if ($1.tipo != 0 && $1.tipo != 1) {
+            yyerror("Erro Semantico: Incremento numerico apenas.");
+            exit(1);
+        }
+        std::string t_res = gerador.novoTemporario();
+        buffer_codigo.push_back(t_res + " = " + std::string($1.nome) + ";");
+        buffer_codigo.push_back(std::string($1.nome) + " = " + std::string($1.nome) + " + 1;");
+        $$.nome = copia_string(t_res);
+        $$.tipo = $1.tipo;
+    }
+    | lvalue DEC {
+        if ($1.tipo != 0 && $1.tipo != 1) {
+            yyerror("Erro Semantico: Decremento numerico apenas.");
+            exit(1);
+        }
+        std::string t_res = gerador.novoTemporario();
+        buffer_codigo.push_back(t_res + " = " + std::string($1.nome) + ";");
+        buffer_codigo.push_back(std::string($1.nome) + " = " + std::string($1.nome) + " - 1;");
+        $$.nome = copia_string(t_res);
+        $$.tipo = $1.tipo;
+    }
+    | INC lvalue {
+        if ($2.tipo != 0 && $2.tipo != 1) {
+            yyerror("Erro Semantico: Incremento numerico apenas.");
+            exit(1);
+        }
+        buffer_codigo.push_back(std::string($2.nome) + " = " + std::string($2.nome) + " + 1;");
+        $$.nome = copia_string(std::string($2.nome));
+        $$.tipo = $2.tipo;
+    }
+    | DEC lvalue {
+        if ($2.tipo != 0 && $2.tipo != 1) {
+            yyerror("Erro Semantico: Decremento numerico apenas.");
+            exit(1);
+        }
+        buffer_codigo.push_back(std::string($2.nome) + " = " + std::string($2.nome) + " - 1;");
+        $$.nome = copia_string(std::string($2.nome));
+        $$.tipo = $2.tipo;
+    }
     /* Operações Matemáticas */
     | expressao SOM expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "+", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; }
     | expressao SUB expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "-", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; }
     | expressao MULT expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "*", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; }
     | expressao DIV expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "/", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; }
-    
-    /* Operações Relacionais (>, <, >=, <=, ==, !=) */
+    /* Operações Relacionais */
     | expressao MAIOR expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, ">", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
     | expressao MENOR expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "<", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
     | expressao MAIOR_IGUAL expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, ">=", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
     | expressao MENOR_IGUAL expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "<=", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
     | expressao IGUAL expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "==", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
     | expressao DIFERENTE expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "!=", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
-    
-    /* Operações Lógicas (&&, ||) */
+    /* Operações Lógicas */
     | expressao E_LOGICO expressao { 
         if ($1.tipo != 2 || $3.tipo != 2) {
-            yyerror("Erro Semantico: Operador '&&' exige tipos booleanos.");
+            yyerror("Erro Semantico: Operador '&&' exige booleanos.");
             exit(1);
         }
         Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "&&", $3.nome, $3.tipo); 
         $$.nome = res.nome; 
-        $$.tipo = 2; // Retorna BOOL
+        $$.tipo = 2;
     }
     | expressao OU_LOGICO expressao { 
         if ($1.tipo != 2 || $3.tipo != 2) {
-            yyerror("Erro Semantico: Operador '||' exige tipos booleanos.");
+            yyerror("Erro Semantico: Operador '||' exige booleanos.");
             exit(1);
         }
         Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "||", $3.nome, $3.tipo); 
         $$.nome = res.nome; 
-        $$.tipo = 2; // Retorna BOOL
+        $$.tipo = 2;
     }
-    
-    /* Negação Lógica (Operador Unário !) */
+    /* Negação */
     | NEGACAO expressao {
         if ($2.tipo != 2) {
-            yyerror("Erro Semantico: Operador '!' exige um tipo booleano.");
+            yyerror("Erro Semantico: Operador '!' exige booleano.");
             exit(1);
         }
         std::string t_res = gerador.novoTemporario();
         $$.nome = copia_string(t_res);
-        $$.tipo = 2; // Resultado de ! é sempre booleano
+        $$.tipo = 2;
         buffer_codigo.push_back(t_res + " = !" + std::string($2.nome) + ";");
     }
-    
-    /* Menos Unário (Números Negativos) */
+    /* Menos Unário */
     | SUB expressao %prec NEGACAO {
         if ($2.tipo != 0 && $2.tipo != 1) {
-            yyerror("Erro Semantico: O operador unario '-' exige um tipo numerico (int ou float).");
+            yyerror("Erro Semantico: Operador '-' exige tipo numerico.");
             exit(1);
         }
-        
         std::string t_res = gerador.novoTemporario();
         $$.nome = copia_string(t_res);
-        $$.tipo = $2.tipo; // Mantém o tipo (se era int, continua int. se era float, continua float)
-        
+        $$.tipo = $2.tipo;
         buffer_codigo.push_back(t_res + " = -" + std::string($2.nome) + ";");
     }
-    
     /* Casting e Parênteses */
     | ABRE_PAR T_INT FECHA_PAR expressao   { Atributo res = gera_codigo_casting(0, $4.nome); $$.nome = res.nome; $$.tipo = res.tipo; }
     | ABRE_PAR T_FLOAT FECHA_PAR expressao { Atributo res = gera_codigo_casting(1, $4.nome); $$.nome = res.nome; $$.tipo = res.tipo; }
@@ -794,57 +1396,66 @@ Atributo gera_codigo_casting(int tipo_destino, char* n_exp) {
 }
 
 void yyerror(const char *s) {
-    std::cerr << s << std::endl;
+    std::cerr << "Erro na linha " << yylineno << ": " << s << std::endl;
 }
 
 int main(int argc, char* argv[]) {
-    // Suporte a argumento de arquivo: ./compilador arquivo.cmm
-    // Se nenhum argumento for passado, lê da entrada padrão (stdin)
     if (argc == 2) {
         FILE* arquivo = fopen(argv[1], "r");
         if (!arquivo) {
             std::cerr << "Erro: nao foi possivel abrir o arquivo '" << argv[1] << "'\n";
             return 1;
         }
-        yyin = arquivo; // yyin é a variável global do Flex que controla a fonte de leitura
+        yyin = arquivo;
     } else if (argc > 2) {
         std::cerr << "Uso: " << argv[0] << " [arquivo.cmm]\n";
         std::cerr << "     " << argv[0] << " < arquivo.cmm\n";
         return 1;
     }
 
-    // Conecta o gerador de temporarios a tabela de simbolos
-    // (necessario para pular nomes ja usados pelo usuario: t1, t2, etc.)
     gerador.setTabela(&tabela);
 
     yyparse();
 
-
-    // Fix 4: Declaracoes das variaveis do usuario vao para o TOPO do main.
-    // Fix 3: write() e uma instrucao nativa de C-- (sem #include externo).
-    // bool e representado como int (0=false, 1=true) — type check ja foi feito.
     std::cout << "#include <stdio.h>\n";
     std::cout << "#include <string.h>\n\n";
+
+    // Imprime Enums globais
+    if (!buffer_enums_global.empty()) {
+        for (const std::string& e : buffer_enums_global) {
+            std::cout << e << "\n";
+        }
+        std::cout << "\n";
+    }
+
+    // Imprime Funções globais
+    if (!buffer_funcoes_global.empty()) {
+        for (const std::string& f : buffer_funcoes_global) {
+            std::cout << f << "\n";
+        }
+        std::cout << "\n";
+    }
+
     std::cout << "int main() {\n";
 
-    // 1. Declaracoes do usuario (sempre no topo)
-    if (!buffer_decls.empty()) {
+    // 1. Declaracoes do usuario (globais/main)
+    if (!buffer_decls_global.empty()) {
         std::cout << "    /* --- declaracoes de variaveis --- */\n";
-        for (const std::string& d : buffer_decls) {
+        for (const std::string& d : buffer_decls_global) {
             std::cout << "    " << d << "\n";
         }
     }
 
-    // 2. Declaracoes dos temporarios gerados (t1, t2, t3...)
+    // 2. Declaracoes dos temporarios gerados no main
     declarador.imprimirDeclaracoes(gerador.getTemporarios(), tabela);
 
-    // 3. Linha em branco separando secao de declaracoes do codigo
-    if (!buffer_decls.empty() || !gerador.getTemporarios().empty()) {
+    // 3. Linha em branco
+    if (!buffer_decls_global.empty() || !gerador.getTemporarios().empty()) {
         std::cout << "\n";
     }
 
-    // 4. Codigo intermediario
-    for (const std::string& linha : buffer_codigo) {
+    // 4. Codigo do main
+    for (const std::string& linha : buffer_codigo_global) {
         std::cout << "    " << linha << "\n";
     }
 
