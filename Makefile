@@ -8,7 +8,19 @@ all:
 	$(CC) $(CFLAGS) src/sintatico.tab.c src/lex.yy.c src/simbolos.cpp src/temporarios.cpp -o bin/compilador
 
 clean:
-	rm -f src/*.tab.* src/lex.yy.c bin/compilador
+	rm -f src/*.tab.* src/lex.yy.c bin/compilador /tmp/saphira_*
+
+# Roda um arquivo .saphira: make run ARQUIVO=testes/01_basico.saphira
+run: all
+	@./executar.sh $(ARQUIVO)
+
+# Mostra o C-- gerado + executa: make ver ARQUIVO=testes/01_basico.saphira
+ver: all
+	@./executar.sh $(ARQUIVO) --ver
+
+# Roda todos os testes de uma vez
+run-todos: all
+	@./executar.sh --todos
 
 # Instala as dependências necessárias (Ubuntu/Debian)
 install-deps:

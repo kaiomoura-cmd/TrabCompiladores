@@ -1,8 +1,0 @@
-/* TESTE 09 - ERRO: while com float na condição (deve REJEITAR) */
-float temperatura;
-
-temperatura = 36.5;
-
-while (temperatura) {
-    temperatura = temperatura + 1.0;
-}

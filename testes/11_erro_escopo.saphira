@@ -1,0 +1,11 @@
+/* TESTE 11 (ERRO SEMÂNTICO) - Escopo de Variável
+   Tenta usar uma variável declarada dentro de um bloco condicional fora dele. */
+
+int a = 5;
+
+if (a > 3) {
+    int b = 10;
+    write(b);
+}
+
+write(b); /* Erro: b foi destruído ao sair do bloco do if */

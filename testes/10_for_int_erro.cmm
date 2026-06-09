@@ -1,6 +1,0 @@
-/* TESTE 10 - ERRO: for com int na condição (deve REJEITAR) */
-int i;
-
-for (i = 0; i; i = i + 1) {
-    i = i + 1;
-}

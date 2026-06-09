@@ -1,0 +1,19 @@
+/* TESTE 09 - Operações com strings
+   Declara strings, lê do teclado, faz atribuição e concatenação. */
+
+string s1;
+string s2;
+string s3;
+
+/* Leitura e escrita direta */
+read(s1);
+read(s2);
+
+/* Atribuição direta de literal string */
+s3 = "Mundo";
+
+/* Concatenação (modifica s1 inline com strcat) */
+s1 + s2;
+s1 + s3;
+
+write(s1);

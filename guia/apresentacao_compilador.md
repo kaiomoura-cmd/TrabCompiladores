@@ -1,190 +1,206 @@
-# Guia de Apresentação — Compilador C--
+	# Manual de Especificação & Documentação da Linguagem Saphira (C--)
 
-## 🎯 A Ideia Central (Abra com isso)
-
-> *"Nós construímos um compilador do zero. Ele lê um código em uma linguagem que nós mesmos inventamos, verifica se ele faz sentido, e gera código intermediário pronto para ser executado."*
-
-A linguagem se chama **C--** (C menos menos). Ela segue a **Filosofia Java/C#**: tipagem forte e segura. Diferente do C puro, que aceita qualquer mistura de tipos sem reclamar, o nosso compilador **rejeita** código que não faz sentido e aborta com uma mensagem de erro clara.
+Este documento serve como a documentação oficial da linguagem **Saphira** (também referenciada como **C--**). Ele descreve a especificação da linguagem, as regras de tipagem, a arquitetura do compilador, a geração de código intermediário e o guia completo de comandos de terminal para compilar e executar programas.
 
 ---
 
-## 🏗️ A Arquitetura — O que construímos
+## 1. Visão Geral & Filosofia
 
-Explique que um compilador tem fases. O nosso tem três:
+A linguagem **Saphira** é uma linguagem de programação imperativa fortemente tipada, projetada com foco em segurança de tipos. Ela adota a **filosofia Java/C#**: ao contrário de C puro, que permite conversões implícitas arriscadas (como tratar inteiros como booleanos ou truncar floats silenciosamente), o compilador Saphira realiza análises semânticas rígidas e **rejeita em tempo de compilação** quaisquer operações que violem a segurança de tipos.
 
-```
-Código .cmm  →  [Analisador Léxico]  →  [Analisador Sintático + Semântico]  →  Código Intermediário
-   (texto)         lexico.l (Flex)         sintatico.y (Bison)                    (saída no terminal)
-```
-
-### 1. Analisador Léxico — `lexico.l`
-> *"É o compilador lendo o código letra por letra e transformando em peças com significado."*
-
-- Pega o texto bruto e transforma em **tokens**: `int`, `=`, `5`, `;`, `if`, `while`...
-- Exemplo: `if (x > 5)` vira os tokens: `IF`, `ABRE_PAR`, `ID("x")`, `MAIOR`, `NUM_INTEIRO("5")`, `FECHA_PAR`
-
-### 2. Analisador Sintático — `sintatico.y`
-> *"É o compilador verificando se a gramática está correta — como verificar se uma frase em português tem sujeito, verbo e predicado."*
-
-- Usa a gramática da linguagem para verificar se a sequência de tokens faz sentido estruturalmente
-- Gerado pela ferramenta **Bison**
-
-### 3. Analisador Semântico — (dentro do `sintatico.y`)
-> *"É o compilador verificando se o significado faz sentido — não adianta a frase estar gramaticalmente correta se ela é uma bobagem."*
-
-- Verifica tipos, variáveis declaradas, uso correto de `break`/`continue`, etc.
-- **Aqui vive a nossa filosofia estrita**
+### Características Principais
+* **Tipagem Estrita:** Verificação estrita de compatibilidade em atribuições e operações.
+* **Escopo de Variáveis Dinâmico:** Gerenciamento por blocos `{ }`. Vazamento de escopo é proibido.
+* **Código Intermediário Autocontido:** O compilador traduz o código Saphira diretamente para código C nativo e válido, sem depender de pós-processamento por expressões regulares ou macros externas.
 
 ---
 
-## 🧱 Os Módulos de Suporte
+## 2. Sistema de Tipos e Operações
 
-### Tabela de Símbolos — `simbolos.cpp`
-> *"É a memória do compilador. Toda vez que declaramos uma variável, ela é guardada aqui com seu nome e tipo."*
+Saphira suporta os seguintes tipos primitivos:
 
-- Implementada como uma **pilha de escopos**: cada `{ }` cria um novo nível
-- Quando saímos de um `{ }`, as variáveis daquele bloco somem automaticamente — **vazamento de escopo não existe**
+| Tipo Saphira | Representação Interna em C | Descrição |
+| :--- | :--- | :--- |
+| `int` | `int` | Inteiros padrão de 32 bits. |
+| `float` | `float` | Números de ponto flutuante. |
+| `bool` | `int` (0 ou 1) | Valores lógicos (`true` e `false`). |
+| `char` | `char` | Caractere único delimitado por aspas simples (ex: `'A'`). |
+| `string` | `char[256]` | Cadeia de caracteres (máx. 256 bytes) delimitada por aspas duplas (ex: `"Olá"`). |
 
-```
-Escopo 0 (global): int i, bool rodando
-Escopo 1 (dentro do while): int par, int fim
-```
+### 2.1. Regras de Atribuição e Coerção
+* **Atribuição Direta:** Só é permitida entre tipos exatamente idênticos.
+* **Coerção Segura (Widening):** É permitido atribuir um valor `int` a uma variável `float`. O compilador gera automaticamente a promoção de tipo `(float)` no código intermediário.
+* **Casting Explícito:** É possível forçar conversões através de casts explícitos:
+  * `(int) expressao_float` (converte float para int)
+  * `(float) expressao_int` (converte int para float)
+* **Tipos Proibidos:** Atribuir `float` a `int`, `int` a `bool`, ou qualquer mistura com `char` e `string` sem as funções adequadas gera um **Erro Semântico** que aborta a compilação.
 
-### Gerador de Temporários — `temporarios.cpp`
-> *"Quando o compilador precisa guardar um resultado intermediário de uma conta, ele cria uma variável temporária automaticamente: T1, T2, T3..."*
-
-- Exemplo: `nota > 5` precisa de um lugar para guardar o resultado antes de atribuir a `aprovado`
-- O compilador gera: `T1 = nota > 5; aprovado = T1;`
+### 2.2. Operações por Tipo
+* **Aritméticas (`+`, `-`, `*`, `/`):** Suportadas por `int` e `float`. O operador `/` realiza divisão inteira se ambos os operandos forem `int`, e divisão de ponto flutuante se houver `float`.
+* **Relacionais (`>`, `>=`, `<`, `<=`, `==`, `!=`):** Comparam expressões aritméticas e retornam um valor `bool` (`0` ou `1`).
+* **Lógicas (`&&`, `||`, `!`):** Operam exclusivamente sobre valores do tipo `bool`.
+* **Strings:**
+  * **Atribuição:** A atribuição `s = "texto"` ou `s1 = s2` é traduzida pelo compilador usando a função C `strcpy`.
+  * **Concatenação (`+`):** Somar duas strings (`s1 + s2`) realiza a concatenação delas, sendo traduzido diretamente para `strcat` no C gerado.
 
 ---
 
-## ⚙️ A Filosofia em Prática — Mostre os exemplos
+## 3. Estruturas de Controle de Fluxo
 
-### ✅ Código válido (aceito)
+### 3.1. Condicional (`if` / `else`)
+A condição avaliada no `if` deve obrigatoriamente ser do tipo `bool`.
 ```java
-bool aprovado;
-int nota;
-
-nota = 7;
-aprovado = nota > 5;  // nota > 5 é uma expressão bool: OK
-
-if (aprovado) {       // aprovado é bool: OK
-    nota = 10;
+if (ativo) {
+    write(1);
+} else {
+    write(0);
 }
 ```
-**Código intermediário gerado:**
-```
-int aprovado; /* bool */
-int nota;
-T1 = nota > 5;
-aprovado = T1;
-ifFalse aprovado goto L1;
-{
-  nota = 10;
-}
-L1:
-```
 
----
-
-### ❌ Código inválido (rejeitado)
+### 3.2. Laços de Repetição (`while` e `for`)
+* A condição de parada dos laços deve ser do tipo `bool`.
+* O `for` suporta declarações inline opcionais em seu bloco de inicialização (ex: `for (int i = 1; ...)`).
 ```java
-int x;
-x = 5;
-if (x) { ... }  // x é int, não bool!
-```
-**Saída do compilador:**
-```
-Erro Semantico: A condicao do 'if' deve ser do tipo bool.
+for (int i = 1; i <= 10; i = i + 1) {
+    write(i);
+}
 ```
 
-> *"Em C isso compilaria e funcionaria. No nosso compilador, isso é um erro — porque misturar tipos é uma inconsistência semântica."*
+### 3.3. Controle de Loops (`break` e `continue`)
+* O compilador gerencia pilhas de desvio exclusivas para cada laço.
+* O comando `break` aborta o laço mais interno ativo ou sai de um bloco `switch`.
+* O comando `continue` salta para a próxima iteração (retorno da condição no `while` ou bloco de incremento no `for`).
+* Usar `break` ou `continue` fora de um contexto válido de laço gera um erro semântico imediato.
 
----
-
-## 🔁 Geração de Código — Como os saltos funcionam
-
-Este é o coração técnico. Explique a estratégia de **labels e gotos**:
-
-### `if / else`
-```
-ifFalse <condição> goto L_else;
-  <bloco then>
-goto L_fim;
-L_else:
-  <bloco else>
-L_fim:
-```
-
-### `while`
-```
-L_inicio:
-ifFalse <condição> goto L_fim;
-  <corpo>
-goto L_inicio;
-L_fim:
-```
-
-### `for`
-```
-<init>
-L_inicio:
-ifFalse <condição> goto L_fim;
-  <corpo>
-  <incremento>   ← emitido depois do corpo (não antes!)
-goto L_inicio;
-L_fim:
-```
-
-> *"O for foi o mais desafiador: no Bison, o incremento é parseado antes do corpo, mas precisa ser executado depois. Resolvemos isso com um buffer temporário que segura o código do incremento e o emite na posição correta."*
-
----
-
-## 🛡️ Validações Semânticas Implementadas
-
-| Situação | Comportamento |
-|---|---|
-| `if (int)` | ❌ Erro: condição deve ser bool |
-| `while (float)` | ❌ Erro: condição deve ser bool |
-| `for (...; int; ...)` | ❌ Erro: condição deve ser bool |
-| `break` fora de laço | ❌ Erro: break fora de laço/switch |
-| `continue` fora de laço | ❌ Erro: continue fora de laço |
-| Variável não declarada | ❌ Erro: variável não declarada |
-| Redeclaração no mesmo escopo | ❌ Erro: já declarada |
-| `int` atribuído a `bool` | ❌ Erro: tipos incompatíveis |
-| `int` atribuído a `float` | ✅ Coerção segura automática (widening) |
-
----
-
-## 📦 O Código Intermediário — A Decisão de Design
-
-> *"O código que geramos é auto-contido. Ele não usa nenhuma biblioteca externa além de strcpy e strcat."*
-
-**Por quê isso importa?**
-- Usar `#include <stdio.h>` seria delegar trabalho para o GCC — estaríamos empurrando o problema pra frente
-- Nós somos os donos da semântica. O `bool` que o usuário escreve vira `int` no código de saída porque já verificamos tudo antes. É o mesmo que Java faz: o código-fonte tem tipos ricos, o bytecode é mais simples
-
-```c
-// Antes (errado): dependia do GCC para entender bool
-#include <stdbool.h>
-bool aprovado;
-
-// Agora (correto): auto-contido, sem bibliotecas externas
-int aprovado; /* bool */
+### 3.4. Seleção Múltipla (`switch` / `case` / `default`)
+Permite múltiplos desvios condicionais baseados em uma expressão inteira ou caractere.
+```java
+switch (opcao) {
+    case 1: {
+        write('A');
+        break;
+    }
+    default: {
+        write('Z');
+    }
+}
 ```
 
 ---
 
-## 💡 Possíveis perguntas e respostas
+## 4. Entrada e Saída (I/O)
 
-**"Por que vocês usaram Flex e Bison e não fizeram tudo na mão?"**
-> Flex e Bison são ferramentas clássicas de compiladores, usadas em produção (o compilador do GCC usa técnicas similares). Elas geram automaticamente o analisador léxico e o parser a partir de regras declarativas — nos permitindo focar na semântica e na geração de código.
+Saphira possui duas instruções primitivas para interação com o terminal:
 
-**"O que são temporários?"**
-> São variáveis criadas pelo compilador, não pelo programador. Toda expressão composta precisa de um lugar temporário para guardar resultados intermediários antes de usá-los.
+1. **`write(expressao)`**: Imprime o valor da expressão no terminal seguido de uma quebra de linha. O compilador detecta o tipo da expressão em tempo de compilação e seleciona automaticamente o formato adequado para o `printf` (`%d\n`, `%f\n`, `%c\n`, `%s\n`).
+2. **`read(variavel)`**: Lê um valor digitado no teclado e armazena na variável fornecida. O compilador gera a chamada do `scanf` com a formatação adequada para o tipo da variável (`%d`, `%f`, `%c`, `%s`). No caso do tipo `char`, ele insere automaticamente um espaço em branco antes do formatador (`" %c"`) para limpar newlines pendentes no buffer de entrada.
 
-**"Por que `break` e `continue` precisam de verificação especial?"**
-> Porque semanticamente eles só fazem sentido dentro de um laço. Um `break` no topo do programa não tem para onde saltar — seria um erro de lógica. Controlamos isso com um contador (`nivel_laco`) que incrementa ao entrar em um laço e decrementa ao sair.
+---
 
-**"O que é o `ifFalse ... goto`?"**
-> É a representação de código de três endereços — o padrão clássico de código intermediário descrito no livro "Compiladores: Princípios, Técnicas e Ferramentas" (o Livro do Dragão). É a forma mais simples de representar desvios condicionais antes de gerar código de máquina.
+## 5. Arquitetura do Compilador
+
+O compilador Saphira é estruturado em fases de processamento:
+
+```
+Arquivo .saphira ➔ [Lexer (Flex)] ➔ [Parser & Semântico (Bison)] ➔ Código C Nativo (saída)
+```
+
+1. **Analisador Léxico (`src/lexico.l`):** Varre o arquivo-fonte caractere por caractere, ignorando espaços e comentários, e agrupa os caracteres em tokens reconhecidos (palavras-chave, operadores, literais e identificadores).
+2. **Analisador Sintático (`src/sintatico.y`):** Monta a estrutura gramatical a partir dos tokens usando regras geradas pelo Bison.
+3. **Analisador Semântico:** Inserido diretamente nas regras de redução do parser. Ele realiza o type checking, valida declarações, gerencia o escopo de variáveis e controla a profundidade de laços para validação de `break`/`continue`.
+4. **Tabela de Símbolos (`src/simbolos.cpp`):** Gerencia variáveis ativas usando uma pilha de escopos (estruturada como vetores de hashes). Cada bloco `{ }` empilha um escopo transparente, que é removido (limpando as variáveis locais) ao encontrar o caractere `}` correspondente.
+5. **Gerador de Temporários (`src/temporarios.cpp`):** Cria variáveis auxiliares (`t1`, `t2`, `t3`...) para armazenar resultados de expressões intermediárias. Evita colisões de nomes verificando se o temporário gerado já foi declarado pelo usuário.
+
+---
+
+## 6. Guia de Execução no Terminal
+
+Esta seção descreve os comandos para construir o compilador, gerar o código intermediário e executar os programas.
+
+### 6.1. Requisitos de Ambiente
+* Compilador GCC (compatível com C++17 e C11).
+* Ferramentas `make`, `flex` (v2.6+) e `bison` (v3.0+).
+
+### 6.2. Construindo o Compilador
+Para compilar o código fonte do compilador Saphira:
+```bash
+# Limpar arquivos de compilações anteriores
+make clean
+# Exemplo de saída: rm -f src/*.tab.* src/lex.yy.c bin/compilador /tmp/saphira_*
+
+# Compilar o compilador (gera o binário em bin/compilador)
+make
+# Exemplo de saída:
+# bison -d src/sintatico.y -o src/sintatico.tab.c
+# flex -o src/lex.yy.c src/lexico.l
+# g++ -std=c++17 -Wall -I src ... -o bin/compilador
+```
+
+### 6.3. Compilando um Programa Saphira para C
+Você pode chamar o compilador diretamente passando o arquivo-fonte. A saída gerada será o código C equivalente impresso no terminal (pode ser redirecionado para um arquivo):
+```bash
+# Executa e exibe o código C gerado na tela:
+./bin/compilador testes/01_basico.saphira
+
+# Exemplo de saída no terminal (trecho):
+# #include <stdio.h>
+# #include <string.h>
+# int main() {
+#     int a; int b; int soma; ...
+#     int t1, t2, t3, t4;
+#     a = 10; b = 3;
+#     t1 = a + b; soma = t1;
+#     printf("%d\n", soma);
+#     ...
+#     return 0;
+# }
+
+# Salva o código C gerado em um arquivo de saída:
+./bin/compilador testes/01_basico.saphira > saida.c
+```
+
+### 6.4. Compilando o Código C Gerado via GCC
+Uma vez gerado o código C, ele pode ser compilado com qualquer compilador C padrão (como GCC) diretamente:
+```bash
+# Compila o arquivo C intermediário para um binário executável:
+gcc -std=c11 saida.c -o programa
+
+# Executa o programa compilado:
+./programa
+# Exemplo de saída no terminal:
+# 13
+# 7
+# 30
+# 3
+```
+
+### 6.5. Usando o Script Auxiliar de Execução (`executar.sh`)
+Para facilitar o desenvolvimento, você pode utilizar o script `executar.sh`, que automatiza todo o pipeline (Compilação Saphira ➔ C ➔ Executável GCC ➔ Execução):
+
+```bash
+# Compilar e executar um arquivo específico:
+./executar.sh testes/01_basico.saphira
+# Exemplo de saída:
+# [1/3] Compilando Saphira → C-- ...
+# [2/3] Copiando código C gerado ...
+# [3/3] Compilando C → executável (gcc) ...
+#
+# ── Saída do programa ────────────────────────────
+# 13
+# 7
+# 30
+# 3
+# ─────────────────────────────────────────────────
+
+# Compilar e executar exibindo também o código C gerado no terminal:
+./executar.sh testes/01_basico.saphira --ver
+# Exemplo de saída:
+# Exibe o código C gerado antes de mostrar o bloco de execução "── Saída do programa ──".
+
+# Executar a suíte completa de testes automatizados:
+./executar.sh --todos
+# Exemplo de saída:
+# Rodando todos os testes em testes/ ...
+# ...
+# Resultado: 9 passou(aram)  0 falhou(aram)
+```

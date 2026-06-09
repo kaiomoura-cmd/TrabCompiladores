@@ -1,5 +1,0 @@
-/* TESTE 12 - ERRO: continue fora de laço (deve REJEITAR) */
-int x;
-
-x = 5;
-continue;

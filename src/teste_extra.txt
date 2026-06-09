@@ -1,9 +1,0 @@
-int a;
-int b;
-
-float a; 
-
-b = -5;
-
-/* Teste 3: Código morto (Expressões sem atribuição) */
-10 + 20;

@@ -10,3 +10,9 @@ src/lex.yy.c
 *.o
 *.out
 .vscode/
+.obsidian/
+saida.c
+programa
+programa.out
+/tmp/saphira_*
+bin/

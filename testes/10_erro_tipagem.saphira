@@ -1,0 +1,8 @@
+/* TESTE 10 (ERRO SEMÂNTICO) - Tipagem Incompatível
+   Tenta realizar soma de bool com int. */
+
+int a = 10;
+bool b = true;
+int c;
+
+c = a + b;

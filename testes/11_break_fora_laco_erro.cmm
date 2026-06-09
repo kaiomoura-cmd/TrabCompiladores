@@ -1,5 +1,0 @@
-/* TESTE 11 - ERRO: break fora de laço (deve REJEITAR) */
-int x;
-
-x = 5;
-break;

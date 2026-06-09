@@ -1,0 +1,33 @@
+/* TESTE 05 - Todos os tipos: int, float, bool, char
+   Testa declaração com atribuição e operações
+   com cada tipo suportado pela linguagem Saphira. */
+
+/* Inteiros */
+int a = 7;
+int b = 2;
+int div_inteira;
+div_inteira = a / b;
+write(div_inteira);          /* Esperado: 3 */
+
+/* Floats */
+float x = 3.5;
+float y = 1.5;
+float soma_f;
+soma_f = x + y;
+write(soma_f);               /* Esperado: 5.000000 */
+
+/* Coerção int -> float */
+float resultado;
+resultado = a + y;           /* int + float: a é promovido */
+write(resultado);            /* Esperado: 8.500000 */
+
+/* Bool */
+bool ativo = true;
+bool inativo = false;
+bool combinado;
+combinado = ativo && !inativo;
+write(combinado);            /* Esperado: 1 */
+
+/* Char */
+char letra = 'A';
+write(letra);                /* Esperado: A */

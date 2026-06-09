@@ -19,6 +19,7 @@ struct Atributo {
 TabelaDeSimbolos tabela;
 GeradorDeTemporarios gerador;
 DeclaracaoDeMemoria declarador;
+std::vector<std::string> buffer_decls;   // Fix 4: declaracoes ficam no topo
 std::vector<std::string> buffer_codigo;
 
 // ─── Gerador de Labels (L1, L2, L3, ...) ──────────────────────────────────
@@ -32,8 +33,14 @@ static int nivel_laco = 0;
 
 // ─── Pilhas globais de labels (usadas pelas regras de fluxo de controle) ────
 // Evitamos $<str>$ intermediários que corrompem o valor no Bison.
-std::vector<std::string> pilha_labels_fim;   // Label de saída de if/while/for
+std::vector<std::string> pilha_labels_fim;   // Label de saída de if (APENAS if/else)
 std::vector<std::string> pilha_labels_ini;   // Label de início de while/for (retorno do goto)
+
+// Pilhas EXCLUSIVAS para laços — usadas por break e continue.
+// Separadas das pilhas do if para que break/continue dentro de um if
+// aninhado num laço aponte corretamente para o laço, não para o if.
+std::vector<std::string> pilha_laco_fim;   // Label de saída do laço (break)
+std::vector<std::string> pilha_laco_ini;   // Label de início do laço (continue)
 
 // Buffer temporário para guardar o código de incremento do for
 // (o incr_for é parseado antes do corpo, mas deve ser emitido depois)
@@ -42,6 +49,7 @@ std::vector<std::string> buffer_incr_for;
 Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2);
 void gera_codigo_atribuicao(char* id, char* n_exp);
 Atributo gera_codigo_casting(int tipo_destino, char* n_exp);
+void faz_atribuicao(char* id, int tipo_destino, char* n_exp, int tipo_exp);
 
 char* copia_string(const std::string& str) {
     char* cstr = new char[str.length() + 1];
@@ -89,27 +97,71 @@ programa:
     | programa comando
     ;
 
-comando: 
-    T_INT ID ';' { 
-          tabela.inserir(std::string($2), Tipo::INT); 
-          buffer_codigo.push_back("int " + std::string($2) + ";"); // Gera o código C
+
+comando:
+    /* Declaracao simples: int x; */
+    T_INT ID ';' {
+          tabela.inserir(std::string($2), Tipo::INT);
+          buffer_decls.push_back("int " + std::string($2) + ";");
       }
-    | T_FLOAT ID ';' { 
-          tabela.inserir(std::string($2), Tipo::FLOAT); 
-          buffer_codigo.push_back("float " + std::string($2) + ";"); 
+    | T_FLOAT ID ';' {
+          tabela.inserir(std::string($2), Tipo::FLOAT);
+          buffer_decls.push_back("float " + std::string($2) + ";");
       }
-    | T_BOOL ID ';'  { 
-          tabela.inserir(std::string($2), Tipo::BOOL); 
-          buffer_codigo.push_back("int " + std::string($2) + "; /* bool */"); 
+    | T_BOOL ID ';' {
+          tabela.inserir(std::string($2), Tipo::BOOL);
+          buffer_decls.push_back("int " + std::string($2) + "; /* bool */");
       }
-    | T_CHAR ID ';'  { 
-          tabela.inserir(std::string($2), Tipo::CHAR); 
-          buffer_codigo.push_back("char " + std::string($2) + ";"); 
+    | T_CHAR ID ';' {
+          tabela.inserir(std::string($2), Tipo::CHAR);
+          buffer_decls.push_back("char " + std::string($2) + ";");
       }
-    | T_STRING ID ';' { 
-            tabela.inserir(std::string($2), Tipo::STRING);
-            buffer_codigo.push_back("string " + std::string($2) + ";");
-        }
+    | T_STRING ID ';' {
+          tabela.inserir(std::string($2), Tipo::STRING);
+          buffer_decls.push_back("char " + std::string($2) + "[256]; /* string */");
+      }
+    /* Fix 2: Declaracao com atribuicao: int x = expr; */
+    | T_INT ID ATRIB expressao ';' {
+          if ($4.tipo != 0) {
+              yyerror("Erro Semantico: Tipo incompativel na declaracao de int.");
+              exit(1);
+          }
+          tabela.inserir(std::string($2), Tipo::INT);
+          buffer_decls.push_back("int " + std::string($2) + ";");
+          buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
+      }
+    | T_FLOAT ID ATRIB expressao ';' {
+          tabela.inserir(std::string($2), Tipo::FLOAT);
+          buffer_decls.push_back("float " + std::string($2) + ";");
+          if ($4.tipo == 1) {
+              buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
+          } else if ($4.tipo == 0) {
+              std::string t_conv = gerador.novoTemporario();
+              buffer_codigo.push_back(t_conv + " = (float) " + std::string($4.nome) + ";");
+              buffer_codigo.push_back(std::string($2) + " = " + t_conv + ";");
+          } else {
+              yyerror("Erro Semantico: Tipo incompativel na declaracao de float.");
+              exit(1);
+          }
+      }
+    | T_BOOL ID ATRIB expressao ';' {
+          if ($4.tipo != 2) {
+              yyerror("Erro Semantico: Tipo incompativel na declaracao de bool.");
+              exit(1);
+          }
+          tabela.inserir(std::string($2), Tipo::BOOL);
+          buffer_decls.push_back("int " + std::string($2) + "; /* bool */");
+          buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
+      }
+    | T_CHAR ID ATRIB expressao ';' {
+          if ($4.tipo != 3) {
+              yyerror("Erro Semantico: Tipo incompativel na declaracao de char.");
+              exit(1);
+          }
+          tabela.inserir(std::string($2), Tipo::CHAR);
+          buffer_decls.push_back("char " + std::string($2) + ";");
+          buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
+      }
     | ID ATRIB expressao ';' { 
             std::string nome_str($1);
 
@@ -128,11 +180,16 @@ comando:
             else if (tipo_real == Tipo::FLOAT) tipo_destino = 1;
             else if (tipo_real == Tipo::BOOL) tipo_destino = 2;
             else if (tipo_real == Tipo::CHAR) tipo_destino = 3;
+            else if (tipo_real == Tipo::STRING) tipo_destino = 4;
 
             // 3. Aplica a Filosofia Java/C# (Tipagem Forte)
             if (tipo_destino == $3.tipo) {
                 // Regra A: Tipos idênticos (ex: int recebe int). Atribuição direta!
-                gera_codigo_atribuicao($1, $3.nome);
+                if (tipo_destino == 4) {
+                    buffer_codigo.push_back("strcpy(" + std::string($1) + ", " + std::string($3.nome) + ");");
+                } else {
+                    gera_codigo_atribuicao($1, $3.nome);
+                }
             } 
             else if (tipo_destino == 1 && $3.tipo == 0) {
                 // Regra B: Coerção Segura (Widening). Guardando um 'int' em um espaço 'float'.
@@ -157,31 +214,54 @@ comando:
                 yyerror(msg.c_str());
                 exit(1);
             }
-            // Gera instrução de leitura no código intermediário
-            buffer_codigo.push_back("$read " + nome_str + ";$");
+            Tipo tipo_real = tabela.buscar(nome_str);
+            std::string fmt = "%d";
+            std::string extra_space = "";
+            if (tipo_real == Tipo::FLOAT) {
+                fmt = "%f";
+            } else if (tipo_real == Tipo::CHAR) {
+                fmt = "%c";
+                extra_space = " "; // Ignora whitespace pendente (ex: newlines)
+            } else if (tipo_real == Tipo::STRING) {
+                fmt = "%s";
+            }
+            
+            if (tipo_real == Tipo::STRING) {
+                buffer_codigo.push_back("scanf(\"" + fmt + "\", " + nome_str + ");");
+            } else {
+                buffer_codigo.push_back("scanf(\"" + extra_space + fmt + "\", &" + nome_str + ");");
+            }
         }
     | WRITE ABRE_PAR expressao FECHA_PAR ';' {
-            buffer_codigo.push_back("$write " + std::string($3.nome) + ";$");
+            std::string fmt = "%d\\n";
+            if ($3.tipo == 1) {
+                fmt = "%f\\n";
+            } else if ($3.tipo == 3) {
+                fmt = "%c\\n";
+            } else if ($3.tipo == 4) {
+                fmt = "%s\\n";
+            }
+            buffer_codigo.push_back("printf(\"" + fmt + "\", " + std::string($3.nome) + ");");
         }
     | cmd_if
     | cmd_while
     | cmd_for
     | cmd_switch
     | BREAK ';' {
-            // ── Verificação Semântica: break só é válido dentro de laço ──
             if (nivel_laco == 0) {
                 yyerror("Erro Semantico: 'break' usado fora de um laco ou switch.");
                 exit(1);
             }
-            buffer_codigo.push_back("break;");
+            /* Usa a pilha EXCLUSIVA de laços — ignora labels de if aninhados */
+            buffer_codigo.push_back("goto " + pilha_laco_fim.back() + ";");
         }
     | CONTINUE ';' {
-            // ── Verificação Semântica: continue só é válido dentro de laço ──
             if (nivel_laco == 0) {
                 yyerror("Erro Semantico: 'continue' usado fora de um laco.");
                 exit(1);
             }
-            buffer_codigo.push_back("continue;");
+            /* Usa a pilha EXCLUSIVA de laços — ignora labels de if aninhados */
+            buffer_codigo.push_back("goto " + pilha_laco_ini.back() + ";");
         }
     | expressao ';' 
     | bloco
@@ -231,7 +311,7 @@ label_if:
             exit(1);
         }
         std::string l_senao = novoLabel();
-        buffer_codigo.push_back("ifFalse " + std::string($2.nome) + " goto " + l_senao + ";");
+        buffer_codigo.push_back("if (!(" + std::string($2.nome) + ")) goto " + l_senao + ";");
         pilha_labels_fim.push_back(l_senao); // Empilha para uso após o corpo
         $$ = copia_string(l_senao);
     }
@@ -290,12 +370,15 @@ cmd_while:
             exit(1);
         }
         std::string l_fim = novoLabel();
-        buffer_codigo.push_back("ifFalse " + std::string($4.nome) + " goto " + l_fim + ";");
-        pilha_labels_fim.push_back(l_fim);
+        buffer_codigo.push_back("if (!(" + std::string($4.nome) + ")) goto " + l_fim + ";");
+        // Empilha nas pilhas DE LAÇO (usadas por break/continue)
+        pilha_laco_fim.push_back(l_fim);
+        pilha_laco_ini.push_back(pilha_labels_ini.back());
         nivel_laco++;
     } comando {
         nivel_laco--;
-        std::string l_fim = pilha_labels_fim.back(); pilha_labels_fim.pop_back();
+        std::string l_fim = pilha_laco_fim.back(); pilha_laco_fim.pop_back();
+        pilha_laco_ini.pop_back();
         std::string l_ini = pilha_labels_ini.back(); pilha_labels_ini.pop_back();
         buffer_codigo.push_back("goto " + l_ini + ";");
         buffer_codigo.push_back(l_fim + ":");
@@ -337,8 +420,10 @@ cmd_for:
             exit(1);
         }
         std::string l_fim = novoLabel();
-        buffer_codigo.push_back("ifFalse " + std::string($6.nome) + " goto " + l_fim + ";");
-        pilha_labels_fim.push_back(l_fim);
+        buffer_codigo.push_back("if (!(" + std::string($6.nome) + ")) goto " + l_fim + ";");
+        // Empilha nas pilhas DE LAÇO (usadas por break/continue)
+        pilha_laco_fim.push_back(l_fim);
+        pilha_laco_ini.push_back(pilha_labels_ini.back());
         // O incremento vai ser parseado agora mas emitido depois do corpo
         // Usamos um índice para saber onde o buffer de incr começa
         buffer_incr_for.clear();
@@ -351,7 +436,8 @@ cmd_for:
             buffer_codigo.push_back(linha);
         }
         buffer_incr_for.clear();
-        std::string l_fim = pilha_labels_fim.back(); pilha_labels_fim.pop_back();
+        std::string l_fim = pilha_laco_fim.back(); pilha_laco_fim.pop_back();
+        pilha_laco_ini.pop_back();
         std::string l_ini = pilha_labels_ini.back(); pilha_labels_ini.pop_back();
         buffer_codigo.push_back("goto " + l_ini + ";");
         buffer_codigo.push_back(l_fim + ":");
@@ -361,6 +447,7 @@ cmd_for:
 init_for:
       /* Vazio — for (;cond;incr) */
     | ID ATRIB expressao {
+        /* Variavel ja declarada, so atribui */
         std::string nome_str($1);
         if (!tabela.existe(nome_str)) {
             std::string msg = "Erro Semantico: Variavel nao declarada: " + nome_str;
@@ -373,17 +460,49 @@ init_for:
         else if (tipo_real == Tipo::FLOAT) tipo_destino = 1;
         else if (tipo_real == Tipo::BOOL)  tipo_destino = 2;
         else if (tipo_real == Tipo::CHAR)  tipo_destino = 3;
-        if (tipo_destino == $3.tipo) {
-            gera_codigo_atribuicao($1, $3.nome);
-        } else if (tipo_destino == 1 && $3.tipo == 0) {
-            std::string t_conv = gerador.novoTemporario();
-            buffer_codigo.push_back(t_conv + " = (float) " + std::string($3.nome) + ";");
-            gera_codigo_atribuicao($1, copia_string(t_conv));
-        } else {
-            std::string msg = "Erro Semantico: Tipos incompativeis na inicializacao do 'for'.";
-            yyerror(msg.c_str());
+        faz_atribuicao($1, tipo_destino, $3.nome, $3.tipo);
+    }
+    /* Fix 2: for com declaracao inline — for(int i = 0; ...) */
+    | T_INT ID ATRIB expressao {
+        if ($4.tipo != 0) {
+            yyerror("Erro Semantico: Tipo incompativel na declaracao int do 'for'.");
             exit(1);
         }
+        tabela.inserir(std::string($2), Tipo::INT);
+        buffer_decls.push_back("int " + std::string($2) + ";");
+        buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
+    }
+    | T_FLOAT ID ATRIB expressao {
+        tabela.inserir(std::string($2), Tipo::FLOAT);
+        buffer_decls.push_back("float " + std::string($2) + ";");
+        if ($4.tipo == 1) {
+            buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
+        } else if ($4.tipo == 0) {
+            std::string t_conv = gerador.novoTemporario();
+            buffer_codigo.push_back(t_conv + " = (float) " + std::string($4.nome) + ";");
+            buffer_codigo.push_back(std::string($2) + " = " + t_conv + ";");
+        } else {
+            yyerror("Erro Semantico: Tipo incompativel na declaracao float do 'for'.");
+            exit(1);
+        }
+    }
+    | T_BOOL ID ATRIB expressao {
+        if ($4.tipo != 2) {
+            yyerror("Erro Semantico: Tipo incompativel na declaracao bool do 'for'.");
+            exit(1);
+        }
+        tabela.inserir(std::string($2), Tipo::BOOL);
+        buffer_decls.push_back("int " + std::string($2) + "; /* bool */");
+        buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
+    }
+    | T_CHAR ID ATRIB expressao {
+        if ($4.tipo != 3) {
+            yyerror("Erro Semantico: Tipo incompativel na declaracao char do 'for'.");
+            exit(1);
+        }
+        tabela.inserir(std::string($2), Tipo::CHAR);
+        buffer_decls.push_back("char " + std::string($2) + ";");
+        buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
     }
     ;
 
@@ -434,10 +553,17 @@ incr_for:
 */
 cmd_switch:
     SWITCH ABRE_PAR expressao FECHA_PAR '{' {
+        std::string l_switch_fim = "L_switch_fim_" + std::to_string(contador_labels + 1);
+        pilha_laco_fim.push_back(l_switch_fim);
+        // switch não tem continue, mas empilhamos string vazia para manter
+        // a pilha simétrica (pop no fechamento)
+        pilha_laco_ini.push_back("");
         nivel_laco++;
     } lista_cases '}' {
         nivel_laco--;
-        buffer_codigo.push_back("$L_switch_fim_" + std::to_string(contador_labels) + ":$");
+        std::string l_fim = pilha_laco_fim.back(); pilha_laco_fim.pop_back();
+        pilha_laco_ini.pop_back();
+        buffer_codigo.push_back(l_fim + ":");
     }
     ;
 
@@ -507,6 +633,8 @@ expressao:
                 $$.tipo = 2;
             } else if (tipo_real == Tipo::CHAR) {
                 $$.tipo = 3;
+            } else if (tipo_real == Tipo::STRING) {
+                $$.tipo = 4;
             }
             
         } else {
@@ -593,7 +721,10 @@ Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2
     if (t1 == 4 || t2 == 4) {
         // Única saída permitida: string + string (concatenação)
         if (t1 == 4 && t2 == 4 && std::string(op) == "+") {
-            buffer_codigo.push_back("$" + t_res + " = " + std::string(n1) + " + " + std::string(n2) + ";$");
+            // Concatenacao de strings: usa strcat (permitido em C--)
+            buffer_codigo.push_back("strcat(" + std::string(n1) + ", " + std::string(n2) + ");");
+            // O resultado e o proprio n1 apos concatenacao
+            res.nome = copia_string(std::string(n1));
             res.tipo = 4;
             return res;
         }
@@ -637,6 +768,20 @@ void gera_codigo_atribuicao(char* id, char* n_exp) {
     buffer_codigo.push_back(std::string(id) + " = " + std::string(n_exp) + ";");
 }
 
+void faz_atribuicao(char* id, int tipo_destino, char* n_exp, int tipo_exp) {
+    if (tipo_destino == tipo_exp) {
+        buffer_codigo.push_back(std::string(id) + " = " + std::string(n_exp) + ";");
+    } else if (tipo_destino == 1 && tipo_exp == 0) { // int -> float (widening)
+        std::string t_conv = gerador.novoTemporario();
+        buffer_codigo.push_back(t_conv + " = (float) " + std::string(n_exp) + ";");
+        buffer_codigo.push_back(std::string(id) + " = " + t_conv + ";");
+    } else {
+        std::string msg = "Erro Semantico: Tipos incompativeis na atribuicao para '" + std::string(id) + "'.";
+        yyerror(msg.c_str());
+        exit(1);
+    }
+}
+
 Atributo gera_codigo_casting(int tipo_destino, char* n_exp) {
     Atributo res;
     std::string t_res = gerador.novoTemporario();
@@ -668,21 +813,41 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Conecta o gerador de temporarios a tabela de simbolos
+    // (necessario para pular nomes ja usados pelo usuario: t1, t2, etc.)
+    gerador.setTabela(&tabela);
+
     yyparse();
 
-    // Nenhum #include externo: o codigo intermediario é auto-contido.
-    // bool é representado como int (0 = false, 1 = true) — o type check já foi feito.
+
+    // Fix 4: Declaracoes das variaveis do usuario vao para o TOPO do main.
+    // Fix 3: write() e uma instrucao nativa de C-- (sem #include externo).
+    // bool e representado como int (0=false, 1=true) — type check ja foi feito.
+    std::cout << "#include <stdio.h>\n";
+    std::cout << "#include <string.h>\n\n";
     std::cout << "int main() {\n";
-    
-    // 1. Imprime os temporários declarados
+
+    // 1. Declaracoes do usuario (sempre no topo)
+    if (!buffer_decls.empty()) {
+        std::cout << "    /* --- declaracoes de variaveis --- */\n";
+        for (const std::string& d : buffer_decls) {
+            std::cout << "    " << d << "\n";
+        }
+    }
+
+    // 2. Declaracoes dos temporarios gerados (t1, t2, t3...)
     declarador.imprimirDeclaracoes(gerador.getTemporarios(), tabela);
-    
-    // 2. Imprime todo o código gerado indentado
+
+    // 3. Linha em branco separando secao de declaracoes do codigo
+    if (!buffer_decls.empty() || !gerador.getTemporarios().empty()) {
+        std::cout << "\n";
+    }
+
+    // 4. Codigo intermediario
     for (const std::string& linha : buffer_codigo) {
         std::cout << "    " << linha << "\n";
     }
-    
-    // 3. Finaliza o programa C
+
     std::cout << "    return 0;\n";
     std::cout << "}\n";
 

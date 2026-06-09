@@ -11,7 +11,10 @@ class GeradorDeTemporarios {
 public:
     GeradorDeTemporarios();
 
-    // Retorna um novo temporário único e o registra internamente para proxima declaração.
+    // Conecta o gerador à tabela de símbolos para evitar colisão de nomes.
+    void setTabela(const TabelaDeSimbolos* tab);
+
+    // Retorna um novo temporário único, pulando nomes já usados pelo usuário.
     std::string novoTemporario();
 
     // Retorna a lista de todos os temporários gerados até agora.
@@ -23,6 +26,7 @@ public:
 private:
     int contador;
     std::vector<std::string> temporarios;
+    const TabelaDeSimbolos* tabela_ref;  // ponteiro fraco, não deleta
 };
 
 // Declaração de Memória

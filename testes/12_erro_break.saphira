@@ -1,0 +1,8 @@
+/* TESTE 12 (ERRO SEMÂNTICO) - Controle de Fluxo Inválido
+   Tenta usar um break fora de qualquer laço (while/for) ou switch. */
+
+int a = 5;
+
+if (a > 3) {
+    break; /* Erro: break fora de laço */
+}
