@@ -2,11 +2,18 @@
 int v[3];
 int m[3][2];
 
-v[1] = 50;
-m[0][1] = 99;
 
-int val_v = v[1];
-int val_m = m[0][1];
 
-write("v[1]: %i \n", val_v);
-write("m[0][1]: %i \n", val_m);
+for(int i = 0; i <3; i++){
+    for(int j =0; j<2; j++){
+        m[i] [j] = i;
+    }
+}
+
+for(int i = 0; i <3; i++){
+    for(int j =0; j<2; j++){
+        write(" %i ", m[i][j]);
+    }
+}
+
+

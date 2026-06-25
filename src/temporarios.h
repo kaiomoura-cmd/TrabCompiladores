@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include "simbolos.h"
 
 // Gerador de Temporários
@@ -17,15 +18,25 @@ public:
     // Retorna um novo temporário único, pulando nomes já usados pelo usuário.
     std::string novoTemporario();
 
+    // Registra o tipo de um temporário (para declaração correta no C--).
+    void definirTipo(const std::string& nome, Tipo tipo);
+
+    // Retorna o tipo de um temporário (default: INT se não registrado).
+    Tipo getTipo(const std::string& nome) const;
+
     // Retorna a lista de todos os temporários gerados até agora.
     const std::vector<std::string>& getTemporarios() const;
 
-    // Reinicia o contador.
+    // Retorna o mapa de tipos dos temporários.
+    const std::unordered_map<std::string, Tipo>& getTiposTemporarios() const;
+
+    // Reinicia o contador e limpa o mapa de tipos.
     void reiniciar();
 
 private:
     int contador;
     std::vector<std::string> temporarios;
+    std::unordered_map<std::string, Tipo> tipos_temporarios;
     const TabelaDeSimbolos* tabela_ref;  // ponteiro fraco, não deleta
 };
 
@@ -36,11 +47,12 @@ public:
     /* Gera e imprime o bloco de declarações no formato:
         int T1, T2;
         float T3;
-     O tipo padrão de temporários é int, a menos que o nome exista na tabela de símbolos com outro tipo.*/
+     O tipo de cada temporário é consultado no mapa tipos_temporarios.
+     Temporários sem tipo registrado recebem int.*/
     void imprimirDeclaracoes(
         const std::vector<std::string>& temporarios,
         const TabelaDeSimbolos& tabela,
-        Tipo tipoPadrao = Tipo::INT
+        const std::unordered_map<std::string, Tipo>& tipos_temporarios
     ) const;
 };
 

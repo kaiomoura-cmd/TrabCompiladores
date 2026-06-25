@@ -1,0 +1,27 @@
+/* TESTE Etapa 1 - Conversão explícita (cast)
+   Testa (int) e (float) em expressões. */
+
+int a = 7;
+int b = 2;
+float f;
+int x;
+
+/* int / int → int (truncado), mas se quiser float: */
+f = (float) a / b;        /* cast em a → a vira float, divisão vira float */
+write(f);                 /* Esperado: 3.500000 */
+
+/* (float) em literal */
+f = (float) 10 / 3;
+write(f);                 /* Esperado: 3.333333 */
+
+/* (int) trunca float para inteiro */
+x = (int) 5.7;
+write(x);                 /* Esperado: 5 */
+
+/* Cast em expressão inteira */
+x = (int) (7.2 + 1.8);
+write(x);                 /* Esperado: 9 */
+
+/* Cast em operação mista */
+f = (float) b + 0.5;
+write(f);                 /* Esperado: 2.500000 */

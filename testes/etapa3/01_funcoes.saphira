@@ -1,8 +1,6 @@
 /* TESTE ETAPA 3 - Funções */
-int somar(int a, int b) {
-    int res = a + b;
-    return res;
+string escrever() {
+    return "teste";
 }
 
-int x = somar(10, 20);
-write("Soma: %i \n", x);
+write("%s", escrever());

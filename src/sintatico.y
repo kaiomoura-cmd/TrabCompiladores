@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstring>
+#include <cstdlib>
 #include <unordered_set>
 #include <algorithm>
 
@@ -395,10 +396,16 @@ comando:
         }
         std::string t_sl = gerador.novoTemporario();
         std::string t_lim = gerador.novoTemporario();
+        std::string lbl_sl = novoLabel();
+        std::string lbl_fim_sl = novoLabel();
         buffer_codigo.push_back(t_lim + " = " + std::string($7.nome) + " - " + std::string($5.nome) + ";");
-        buffer_codigo.push_back("for (int " + t_sl + " = 0; " + t_sl + " < " + t_lim + "; " + t_sl + "++) {");
+        buffer_codigo.push_back(t_sl + " = 0;");
+        buffer_codigo.push_back(lbl_sl + ":");
+        buffer_codigo.push_back("if (!(" + t_sl + " < " + t_lim + ")) goto " + lbl_fim_sl + ";");
         buffer_codigo.push_back("    " + dest + "[" + t_sl + "] = " + simb_src.nome_c + "[" + std::string($5.nome) + " + " + t_sl + "];");
-        buffer_codigo.push_back("}");
+        buffer_codigo.push_back(t_sl + "++;");
+        buffer_codigo.push_back("goto " + lbl_sl + ";");
+        buffer_codigo.push_back(lbl_fim_sl + ":");
     }
     /* Operadores compostos */
     | lvalue MAIS_ATRIB expressao ';' {
@@ -552,9 +559,13 @@ comando:
         }
         std::string t_sl = gerador.novoTemporario();
         std::string t_lim = gerador.novoTemporario();
+        std::string lbl_sl = novoLabel();
+        std::string lbl_fim_sl = novoLabel();
         buffer_codigo.push_back(t_lim + " = " + std::string($7.nome) + " - " + std::string($5.nome) + ";");
         buffer_codigo.push_back("printf(\"[\");");
-        buffer_codigo.push_back("for (int " + t_sl + " = 0; " + t_sl + " < " + t_lim + "; " + t_sl + "++) {");
+        buffer_codigo.push_back(t_sl + " = 0;");
+        buffer_codigo.push_back(lbl_sl + ":");
+        buffer_codigo.push_back("if (!(" + t_sl + " < " + t_lim + ")) goto " + lbl_fim_sl + ";");
         buffer_codigo.push_back("    if (" + t_sl + " > 0) printf(\", \");");
         if (simb.tipo == Tipo::INT) {
             buffer_codigo.push_back("    printf(\"%d\", " + simb.nome_c + "[" + std::string($5.nome) + " + " + t_sl + "]);");
@@ -563,7 +574,9 @@ comando:
         } else if (simb.tipo == Tipo::CHAR) {
             buffer_codigo.push_back("    printf(\"%c\", " + simb.nome_c + "[" + std::string($5.nome) + " + " + t_sl + "]);");
         }
-        buffer_codigo.push_back("}");
+        buffer_codigo.push_back(t_sl + "++;");
+        buffer_codigo.push_back("goto " + lbl_sl + ";");
+        buffer_codigo.push_back(lbl_fim_sl + ":");
         buffer_codigo.push_back("printf(\"]\\n\");");
     }
     | cmd_if
@@ -808,6 +821,7 @@ init_for:
             buffer_codigo.push_back(simb.nome_c + " = " + std::string($4.nome) + ";");
         } else if ($4.tipo == 0) {
             std::string t_conv = gerador.novoTemporario();
+            gerador.definirTipo(t_conv, Tipo::FLOAT);
             buffer_codigo.push_back(t_conv + " = (float) " + std::string($4.nome) + ";");
             buffer_codigo.push_back(simb.nome_c + " = " + t_conv + ";");
         } else {
@@ -1081,6 +1095,18 @@ lvalue:
             yyerror("Erro Semantico: Indice do vetor deve ser do tipo int.");
             exit(1);
         }
+        // Checa se indice literal esta dentro dos limites do vetor
+        {
+            char* end = nullptr;
+            long val = strtol($3.nome, &end, 10);
+            if (end != $3.nome && *end == '\0') {
+                if (val < 0 || val >= simb.dim1) {
+                    std::string msg = "Erro Semantico: Indice " + std::string($3.nome) + " fora dos limites do vetor '" + nome_str + "' (0.." + std::to_string(simb.dim1 - 1) + ").";
+                    yyerror(msg.c_str());
+                    exit(1);
+                }
+            }
+        }
         $$.tipo = (int)simb.tipo;
         $$.nome = copia_string(simb.nome_c + "[" + std::string($3.nome) + "]");
         $$.nome_orig = copia_string(nome_str);
@@ -1095,6 +1121,28 @@ lvalue:
         if ($3.tipo != 0 || $6.tipo != 0) {
             yyerror("Erro Semantico: Indices da matriz devem ser do tipo int.");
             exit(1);
+        }
+        // Checa se indices literais estao dentro dos limites da matriz
+        // (pula checagem para matrizes jagged, que tem dim2 = -1)
+        if (simb.dim2 >= 0) {
+            char* end = nullptr;
+            long val1 = strtol($3.nome, &end, 10);
+            if (end != $3.nome && *end == '\0') {
+                if (val1 < 0 || val1 >= simb.dim1) {
+                    std::string msg = "Erro Semantico: Indice " + std::string($3.nome) + " fora dos limites da matriz '" + nome_str + "' na dimensao 0 (0.." + std::to_string(simb.dim1 - 1) + ").";
+                    yyerror(msg.c_str());
+                    exit(1);
+                }
+            }
+            end = nullptr;
+            long val2 = strtol($6.nome, &end, 10);
+            if (end != $6.nome && *end == '\0') {
+                if (val2 < 0 || val2 >= simb.dim2) {
+                    std::string msg = "Erro Semantico: Indice " + std::string($6.nome) + " fora dos limites da matriz '" + nome_str + "' na dimensao 1 (0.." + std::to_string(simb.dim2 - 1) + ").";
+                    yyerror(msg.c_str());
+                    exit(1);
+                }
+            }
         }
         $$.tipo = (int)simb.tipo;
         $$.nome = copia_string(simb.nome_c + "[" + std::string($3.nome) + "][" + std::string($6.nome) + "]");
@@ -1314,6 +1362,7 @@ funcao:
         
         std::vector<std::string> temps = gerador.getTemporarios();
         if (!temps.empty()) {
+            const auto& tipos = gerador.getTiposTemporarios();
             std::unordered_map<std::string, std::vector<std::string>> porTipo;
             bool has_temps = false;
             for (const auto& temp : temps) {
@@ -1322,6 +1371,10 @@ funcao:
                 }
                 has_temps = true;
                 Tipo t = Tipo::INT;
+                auto it = tipos.find(temp);
+                if (it != tipos.end()) {
+                    t = it->second;
+                }
                 porTipo[tipoParaString(t)].push_back(temp);
             }
             if (has_temps) {
@@ -1468,6 +1521,7 @@ expressao:
         $$.tipo = (int)simb.tipo_retorno;
         if (simb.tipo_retorno != Tipo::VOID) {
             std::string t_res = gerador.novoTemporario();
+            gerador.definirTipo(t_res, simb.tipo_retorno);
             buffer_codigo.push_back(t_res + " = " + nome_func + "(" + args_c + ");");
             $$.nome = copia_string(t_res);
         } else {
@@ -1741,20 +1795,25 @@ Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2
     if (t1 == t2) {
         buffer_codigo.push_back(t_res + " = " + std::string(n1) + " " + op + " " + std::string(n2) + ";");
         res.tipo = t1;
+        gerador.definirTipo(t_res, (Tipo)t1);
     } 
     // REGRA 2: Coerção Segura (Widening) -> int (0) + float (1)
     else if (t1 == 0 && t2 == 1) {
         std::string t_conv = gerador.novoTemporario();
+        gerador.definirTipo(t_conv, Tipo::FLOAT);
         buffer_codigo.push_back(t_conv + " = (float) " + std::string(n1) + ";");
         buffer_codigo.push_back(t_res + " = " + t_conv + " " + op + " " + std::string(n2) + ";");
         res.tipo = 1; // O resultado vira float
+        gerador.definirTipo(t_res, Tipo::FLOAT);
     } 
     // REGRA 3: Coerção Segura (Widening) -> float (1) + int (0)
     else if (t1 == 1 && t2 == 0) {
         std::string t_conv = gerador.novoTemporario();
+        gerador.definirTipo(t_conv, Tipo::FLOAT);
         buffer_codigo.push_back(t_conv + " = (float) " + std::string(n2) + ";");
         buffer_codigo.push_back(t_res + " = " + std::string(n1) + " " + op + " " + t_conv + ";");
         res.tipo = 1; // O resultado vira float
+        gerador.definirTipo(t_res, Tipo::FLOAT);
     } 
     // REGRA 4: Filosofia Java/C# -> Qualquer outra mistura é proibida!
     else {
@@ -1776,6 +1835,7 @@ void faz_atribuicao(char* id, int tipo_destino, char* n_exp, int tipo_exp) {
         buffer_codigo.push_back(std::string(id) + " = " + std::string(n_exp) + ";");
     } else if (tipo_destino == 1 && tipo_exp == 0) { // int -> float (widening)
         std::string t_conv = gerador.novoTemporario();
+        gerador.definirTipo(t_conv, Tipo::FLOAT);
         buffer_codigo.push_back(t_conv + " = (float) " + std::string(n_exp) + ";");
         buffer_codigo.push_back(std::string(id) + " = " + t_conv + ";");
     } else {
@@ -1788,6 +1848,8 @@ void faz_atribuicao(char* id, int tipo_destino, char* n_exp, int tipo_exp) {
 Atributo gera_codigo_casting(int tipo_destino, char* n_exp) {
     Atributo res;
     std::string t_res = gerador.novoTemporario();
+    Tipo tipo = (tipo_destino == 0) ? Tipo::INT : Tipo::FLOAT;
+    gerador.definirTipo(t_res, tipo);
     res.nome = copia_string(t_res);
     res.tipo = tipo_destino;
     std::string str_tipo = (tipo_destino == 0) ? "int" : "float";
@@ -1931,7 +1993,7 @@ int main(int argc, char* argv[]) {
     }
 
     // 2. Declaracoes dos temporarios gerados no main
-    declarador.imprimirDeclaracoes(gerador.getTemporarios(), tabela);
+    declarador.imprimirDeclaracoes(gerador.getTemporarios(), tabela, gerador.getTiposTemporarios());
 
     // 3. Linha em branco
     if (!buffer_decls_global.empty() || !gerador.getTemporarios().empty()) {
