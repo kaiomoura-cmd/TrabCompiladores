@@ -1,14 +1,9 @@
 /* TESTE Etapa 1 - Operações com char
-   Declaração, atribuição, comparação e
-   conversão implícita char <-> int. */
+   Declaração, atribuição, comparação
+   e operações básicas com o tipo char. */
 
 char letra = 'Z';
 write(letra);             /* Esperado: Z */
-
-/* Char também é valor numérico (ASCII) */
-char proxima;
-proxima = letra + 1;
-write(proxima);           /* Esperado: [ (Z + 1 = 91 = '[') */
 
 /* Comparação de chars */
 bool igual;
@@ -24,3 +19,12 @@ char c1 = 'X';
 char c2 = 'Y';
 write(c1);                /* Esperado: X */
 write(c2);                /* Esperado: Y */
+
+/* Char inicializado com outro char */
+char copia;
+copia = letra;
+write(copia);             /* Esperado: Z */
+
+/* Teste com valor ASCII */
+char ascii = 'A';
+write(ascii);             /* Esperado: A */

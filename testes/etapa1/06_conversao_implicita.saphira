@@ -1,0 +1,28 @@
+/* TESTE Etapa 1 - Conversão implícita entre tipos
+   Testa promoção automática int→float em
+   expressões aritméticas mistas. */
+
+int x = 7;
+float f;
+float y = 2.5;
+
+/* int + float → float (int promovido automaticamente) */
+f = x + y;
+write(f);                 /* Esperado: 9.500000 */
+
+/* Expressão mista: int operador float */
+f = 10 + 3.14;
+write(f);                 /* Esperado: 13.140000 */
+
+/* Multiplicação int * float */
+f = 3 * 1.5;
+write(f);                 /* Esperado: 4.500000 */
+
+/* Divisão com promoção implícita */
+f = 5 + 2.0;
+write(f);                 /* Esperado: 7.000000 */
+
+/* Subtração mista */
+float z;
+z = 7.5 - 2;
+write(z);                 /* Esperado: 5.500000 */

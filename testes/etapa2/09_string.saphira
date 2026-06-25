@@ -1,19 +1,22 @@
-/* TESTE 09 - Operações com strings
-   Declara strings, lê do teclado, faz atribuição e concatenação. */
+/* TESTE Etapa 2 - Operações com strings
+   Declara strings, atribuição de literal e concatenação.
+   (read() removido pois bloqueia em testes automatizados) */
 
 string s1;
 string s2;
-string s3;
-
-/* Leitura e escrita direta */
-read(s1);
-read(s2);
 
 /* Atribuição direta de literal string */
-s3 = "Mundo";
+s1 = "Ola";
+s2 = "Mundo";
 
-/* Concatenação (modifica s1 inline com strcat) */
+/* Concatenação */
 s1 + s2;
+
+write(s1);                 /* Esperado: OlaMundo */
+
+/* Segunda concatenação */
+string s3;
+s3 = "!!!";
 s1 + s3;
 
-write(s1);
+write(s1);                 /* Esperado: OlaMundo!!! */

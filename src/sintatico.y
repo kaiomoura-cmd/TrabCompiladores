@@ -310,7 +310,8 @@ comando:
         if (tipo_dest == $3.tipo) {
             if (tipo_dest == 4) {
                 buffer_codigo.push_back("free(" + lval_nome + ");");
-                buffer_codigo.push_back(lval_nome + " = strdup(" + std::string($3.nome) + ");");
+                buffer_codigo.push_back(lval_nome + " = malloc(strlen(" + std::string($3.nome) + ") + 1);");
+                buffer_codigo.push_back("strcpy(" + lval_nome + ", " + std::string($3.nome) + ");");
             } else {
                 buffer_codigo.push_back(lval_nome + " = " + std::string($3.nome) + ";");
             }
@@ -461,7 +462,8 @@ comando:
                 }
                 buffer_codigo.push_back("scanf(\"" + fmt + "\", t_read_buf);");
                 buffer_codigo.push_back("free(" + nome_str + ");");
-                buffer_codigo.push_back(nome_str + " = strdup(t_read_buf);");
+                buffer_codigo.push_back(nome_str + " = malloc(strlen(t_read_buf) + 1);");
+                buffer_codigo.push_back("strcpy(" + nome_str + ", t_read_buf);");
             } else {
                 buffer_codigo.push_back("scanf(\"" + extra_space + fmt + "\", &" + nome_str + ");");
             }
@@ -1101,7 +1103,8 @@ declaracao_item:
         Simbolo simb = tabela.buscarSimbolo(std::string($1));
         if (t == Tipo::STRING) {
             buffer_decls.push_back("char* " + simb.nome_c + " = NULL;");
-            buffer_codigo.push_back(simb.nome_c + " = strdup(\"\");");
+            buffer_codigo.push_back(simb.nome_c + " = malloc(1);");
+            buffer_codigo.push_back(simb.nome_c + "[0] = '\\0';");
         } else if (t == Tipo::BOOL) {
             buffer_decls.push_back("int " + simb.nome_c + "; /* bool */");
         } else {
@@ -1115,7 +1118,8 @@ declaracao_item:
         if (t == Tipo::STRING) {
             buffer_decls.push_back("char* " + simb.nome_c + " = NULL;");
             if ($3.tipo == 4) {
-                buffer_codigo.push_back(simb.nome_c + " = strdup(" + std::string($3.nome) + ");");
+                buffer_codigo.push_back(simb.nome_c + " = malloc(strlen(" + std::string($3.nome) + ") + 1);");
+                buffer_codigo.push_back("strcpy(" + simb.nome_c + ", " + std::string($3.nome) + ");");
             } else {
                 yyerror("Erro Semantico: Tipo incompativel para string.");
                 exit(1);
