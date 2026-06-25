@@ -330,7 +330,9 @@ comando:
         for (size_t r = 0; r < linhas->size(); ++r) {
             std::vector<Atributo>* cols = (*linhas)[r];
             int num_cols = (int)cols->size();
-            buffer_codigo.push_back(simb_inserido.nome_c + "[" + std::to_string(r) + "] = malloc(" + std::to_string(num_cols) + " * sizeof(" + tipoParaString(t) + "));");
+            std::string t_size = gerador.novoTemporario();
+            buffer_codigo.push_back(t_size + " = " + std::to_string(num_cols) + " * sizeof(" + tipoParaString(t) + ");");
+            buffer_codigo.push_back(simb_inserido.nome_c + "[" + std::to_string(r) + "] = malloc(" + t_size + ");");
             for (int c = 0; c < num_cols; ++c) {
                 if (t != (Tipo)(*cols)[c].tipo) {
                     yyerror("Erro Semantico: Tipo de valor invalido na inicializacao da matriz irregular.");
