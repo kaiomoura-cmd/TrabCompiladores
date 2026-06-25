@@ -1,0 +1,34 @@
+/* TESTE Etapa 1 - Operações com float
+   Declaração, operações aritméticas,
+   comparações e expressões mistas. */
+
+float pi = 3.14159;
+float dois = 2.0;
+float resultado;
+
+/* Multiplicação */
+resultado = pi * dois;
+write(resultado);         /* Esperado: 6.283180 */
+
+/* Divisão */
+resultado = pi / dois;
+write(resultado);         /* Esperado: 1.570795 */
+
+/* Soma e subtração */
+float a = 10.5;
+float b = 3.2;
+resultado = a + b;
+write(resultado);         /* Esperado: 13.700000 */
+resultado = a - b;
+write(resultado);         /* Esperado: 7.300000 */
+
+/* Comparações com float */
+bool cmp;
+cmp = a > b;
+write(cmp);               /* Esperado: 1 (true) */
+
+cmp = a == 10.5;
+write(cmp);               /* Esperado: 1 (true) */
+
+cmp = a < 5.0;
+write(cmp);               /* Esperado: 0 (false) */

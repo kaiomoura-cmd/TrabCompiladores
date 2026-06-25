@@ -1,0 +1,50 @@
+/* TESTE Etapa 1 - Operadores relacionais
+   Testa todos os operadores de comparação:
+   <, >, <=, >=, ==, != com int e float. */
+
+int a = 10;
+int b = 20;
+int c = 10;
+bool r;
+
+/* Maior que > */
+r = a > b;
+write(r);                 /* Esperado: 0 (false) */
+r = b > a;
+write(r);                 /* Esperado: 1 (true) */
+
+/* Menor que < */
+r = a < b;
+write(r);                 /* Esperado: 1 (true) */
+r = b < a;
+write(r);                 /* Esperado: 0 (false) */
+
+/* Maior ou igual >= */
+r = a >= c;
+write(r);                 /* Esperado: 1 (true) */
+r = a >= b;
+write(r);                 /* Esperado: 0 (false) */
+
+/* Menor ou igual <= */
+r = a <= c;
+write(r);                 /* Esperado: 1 (true) */
+r = b <= a;
+write(r);                 /* Esperado: 0 (false) */
+
+/* Igual == */
+r = a == c;
+write(r);                 /* Esperado: 1 (true) */
+r = a == b;
+write(r);                 /* Esperado: 0 (false) */
+
+/* Diferente != */
+r = a != b;
+write(r);                 /* Esperado: 1 (true) */
+r = a != c;
+write(r);                 /* Esperado: 0 (false) */
+
+/* Com float também */
+float x = 5.5;
+float y = 5.5;
+r = x == y;
+write(r);                 /* Esperado: 1 (true) */

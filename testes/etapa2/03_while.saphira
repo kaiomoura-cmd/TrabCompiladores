@@ -1,0 +1,38 @@
+/* TESTE 03 - While com break
+   Soma 1+2+3+...+10 mas para antes do 6 (usa break).
+   Esperado: 1+2+3+4+5 = 15 */
+
+int i = 1;
+int soma = 0;
+bool rodando;
+rodando = i <= 10;
+
+while (rodando) {
+    /* Para quando i == 6 */
+    bool parar;
+    parar = i == 6;
+    if (parar) {
+        break;
+    }
+
+    soma = soma + i;
+    i = i + 1;
+    rodando = i <= 10;
+}
+
+/* Esperado: 15 */
+write(soma);
+
+/* Segundo while: conta de 10 até 1 */
+int j = 10;
+bool descendo;
+descendo = j >= 1;
+int contagem = 0;
+while (descendo) {
+    contagem = contagem + 1;
+    j = j - 1;
+    descendo = j >= 1;
+}
+/* Esperado: 10 */
+write(contagem);
+

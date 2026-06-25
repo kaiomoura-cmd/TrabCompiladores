@@ -1,0 +1,38 @@
+/* TESTE Etapa 1 - Conversão explícita (cast)
+   Testa conversão entre tipos via cast explícito:
+   int -> float, float -> int, int -> char,
+   char -> int, bool -> int. */
+
+/* int -> float (promoção) */
+int x = 7;
+float f;
+f = (float) x;
+write(f);                 /* Esperado: 7.000000 */
+
+/* float -> int (truncamento) */
+float y = 9.8;
+int i;
+i = (int) y;
+write(i);                 /* Esperado: 9 */
+
+/* int -> char (código ASCII) */
+int codigo = 65;
+char c;
+c = (char) codigo;
+write(c);                 /* Esperado: A */
+
+/* char -> int */
+char d = 'B';
+int n;
+n = (int) d;
+write(n);                 /* Esperado: 66 */
+
+/* bool -> int */
+bool v = true;
+int val;
+val = (int) v;
+write(val);               /* Esperado: 1 */
+
+bool falso = false;
+val = (int) falso;
+write(val);               /* Esperado: 0 */

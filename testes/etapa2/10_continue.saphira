@@ -1,0 +1,40 @@
+/* TESTE Etapa 2 - Continue
+   Testa continue dentro de while e for.
+   Continue pula o resto do corpo e vai
+   para a próxima iteração. */
+
+/* Continue em while: soma apenas números pares */
+int i = 0;
+int soma = 0;
+bool rodando;
+rodando = i < 10;
+
+while (rodando) {
+    i = i + 1;
+
+    /* Se ímpar, pula */
+    bool eh_impar;
+    eh_impar = i != (i / 2) * 2;
+    if (eh_impar) {
+        rodando = i < 10;
+        continue;
+    }
+
+    soma = soma + i;
+    rodando = i < 10;
+}
+write(soma);               /* Esperado: 2+4+6+8+10 = 30 */
+
+
+/* Continue em for: soma apenas ímpares */
+int soma_impares = 0;
+
+for (int j = 1; j <= 10; j = j + 1) {
+    bool eh_par;
+    eh_par = j == (j / 2) * 2;
+    if (eh_par) {
+        continue;
+    }
+    soma_impares = soma_impares + j;
+}
+write(soma_impares);       /* Esperado: 1+3+5+7+9 = 25 */

@@ -1,0 +1,29 @@
+/* TESTE Etapa 1 - Operações com boolean
+   Declaração, atribuição, operadores lógicos
+   e uso de true/false como valores. */
+
+bool a = true;
+bool b = false;
+bool c;
+
+/* AND lógico */
+c = a && b;
+write(c);                /* Esperado: 0 (false) */
+
+/* OR lógico */
+c = a || b;
+write(c);                /* Esperado: 1 (true) */
+
+/* NOT lógico */
+c = !a;
+write(c);                /* Esperado: 0 (false) */
+
+/* Combinações */
+bool d;
+d = (true || false) && true;
+write(d);                /* Esperado: 1 (true) */
+
+/* XOR manual: (a && !b) || (!a && b) */
+bool e;
+e = (a && !b) || (!a && b);
+write(e);                /* Esperado: 1 (true), pois a XOR b = true XOR false = true */

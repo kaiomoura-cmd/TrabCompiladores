@@ -1,0 +1,59 @@
+/* TESTE Etapa 2 - Switch
+   Testa desvio condicional múltiplo com switch.
+   Cada case tem break explícito (sem fall-through). */
+
+int opcao = 2;
+int resultado = 0;
+
+switch (opcao) {
+    case 1: {
+        resultado = 10;
+        break;
+    }
+    case 2: {
+        resultado = 20;
+        break;
+    }
+    case 3: {
+        resultado = 30;
+        break;
+    }
+}
+
+write(resultado);          /* Esperado: 20 */
+
+/* Testa cada case */
+int val = 3;
+int r = 0;
+
+switch (val) {
+    case 1: {
+        r = 100;
+        break;
+    }
+    case 2: {
+        r = 200;
+        break;
+    }
+    case 3: {
+        r = 300;
+        break;
+    }
+}
+write(r);                  /* Esperado: 300 */
+
+/* Switch com case que não executa (fall-through não permitido) */
+int x = 1;
+int saida = 0;
+
+switch (x) {
+    case 1: {
+        saida = 42;
+        break;
+    }
+    case 2: {
+        saida = 99;
+        break;
+    }
+}
+write(saida);              /* Esperado: 42 */

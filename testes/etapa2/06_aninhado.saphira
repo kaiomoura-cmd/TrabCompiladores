@@ -1,0 +1,36 @@
+/* TESTE 06 - Estruturas aninhadas
+   If dentro de for, for dentro de while,
+   testa escopo correto de variáveis. */
+
+/* Tabuada do 3 (apenas os pares) */
+int mult;
+for (int n = 1; n <= 10; n = n + 1) {
+    mult = 3 * n;
+
+    bool eh_par;
+    eh_par = mult == (mult / 2) * 2;
+
+    if (eh_par) {
+        write(mult);   /* Esperado: 6, 12, 18, 24, 30 */
+    }
+}
+
+/* While aninhado: conta até 3 duas vezes */
+int outer = 1;
+bool outer_rodando;
+outer_rodando = outer <= 2;
+
+while (outer_rodando) {
+    int inner = 1;
+    bool inner_rodando;
+    inner_rodando = inner <= 3;
+
+    while (inner_rodando) {
+        write(inner);       /* Esperado: 1,2,3,1,2,3 */
+        inner = inner + 1;
+        inner_rodando = inner <= 3;
+    }
+
+    outer = outer + 1;
+    outer_rodando = outer <= 2;
+}

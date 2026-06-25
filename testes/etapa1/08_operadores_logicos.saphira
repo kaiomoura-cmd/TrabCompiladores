@@ -1,0 +1,43 @@
+/* TESTE Etapa 1 - Operadores lógicos
+   Testa && (AND), || (OR), ! (NOT) com
+   variáveis bool e expressões combinadas. */
+
+bool a = true;
+bool b = false;
+bool r;
+
+/* AND (&&) — tabela verdade */
+r = a && a;
+write(r);                 /* Esperado: 1 (true && true = true) */
+r = a && b;
+write(r);                 /* Esperado: 0 (true && false = false) */
+r = b && a;
+write(r);                 /* Esperado: 0 (false && true = false) */
+r = b && b;
+write(r);                 /* Esperado: 0 (false && false = false) */
+
+/* OR (||) — tabela verdade */
+r = a || a;
+write(r);                 /* Esperado: 1 (true || true = true) */
+r = a || b;
+write(r);                 /* Esperado: 1 (true || false = true) */
+r = b || a;
+write(r);                 /* Esperado: 1 (false || true = true) */
+r = b || b;
+write(r);                 /* Esperado: 0 (false || false = false) */
+
+/* NOT (!) */
+r = !a;
+write(r);                 /* Esperado: 0 (!true = false) */
+r = !b;
+write(r);                 /* Esperado: 1 (!false = true) */
+
+/* Combinações */
+r = (a || b) && !b;
+write(r);                 /* Esperado: 1 */
+
+r = !(a && b);
+write(r);                 /* Esperado: 1 (!(false) = true) */
+
+r = (a || b) && (a && !b);
+write(r);                 /* Esperado: 1 */

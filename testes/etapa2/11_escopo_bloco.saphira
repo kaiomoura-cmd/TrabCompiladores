@@ -1,0 +1,44 @@
+/* TESTE Etapa 2 - Escopo de bloco
+   Testa escopo local vs global, shadowing
+   e variáveis com mesmo nome em blocos diferentes. */
+
+/* Escopo global */
+int x = 100;
+write(x);                  /* Esperado: 100 */
+
+/* Bloco com nova variável (shadow) */
+{
+    int x = 200;
+    write(x);              /* Esperado: 200 (sombra) */
+}
+write(x);                  /* Esperado: 100 (volta ao global) */
+
+/* Variáveis em blocos independentes */
+{
+    int a = 10;
+    write(a);              /* Esperado: 10 */
+}
+
+{
+    int a = 20;
+    write(a);              /* Esperado: 20 (escopo diferente) */
+}
+
+/* Escopo dentro de if */
+int y = 5;
+if (y >= 5) {
+    int z = 99;
+    write(z);              /* Esperado: 99 */
+}
+
+/* Escopo dentro de while */
+int cont = 0;
+bool rodando;
+rodando = cont < 3;
+while (rodando) {
+    int temp;
+    temp = cont * 10;
+    write(temp);           /* Esperado: 0, depois 10, depois 20 */
+    cont = cont + 1;
+    rodando = cont < 3;
+}
