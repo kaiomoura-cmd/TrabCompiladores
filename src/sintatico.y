@@ -303,6 +303,46 @@ comando:
         }
         delete linhas;
     }
+    /* Matriz irregular (jagged): int m[3][] = {{1,2}, {3,4,5}, {6}}; */
+    | tipo ID '[' NUM_INTEIRO ']' '[' ']' ATRIB '{' lista_linhas_matriz '}' ';' {
+        std::string nome_var($2);
+        int dim1 = std::stoi($4);
+        Tipo t = (Tipo)$1;
+        std::vector<std::vector<Atributo>*>* linhas = $10;
+        if ((int)linhas->size() > dim1) {
+            yyerror("Erro Semantico: Numero de linhas maior que dim1.");
+            exit(1);
+        }
+        Simbolo simb;
+        simb.nome = nome_var;
+        simb.tipo = t;
+        simb.eh_matriz = true;
+        simb.eh_jagged = true;
+        simb.dim1 = dim1;
+        simb.dim2 = -1;  // marcador de jagged
+        tabela.inserirSimbolo(nome_var, simb);
+        Simbolo simb_inserido = tabela.buscarSimbolo(nome_var);
+        
+        // Declara array de ponteiros: int* nome[dim1];
+        buffer_decls.push_back(tipoParaString(t) + "* " + simb_inserido.nome_c + "[" + std::to_string(dim1) + "];");
+        
+        // Aloca cada linha com malloc e inicializa
+        for (size_t r = 0; r < linhas->size(); ++r) {
+            std::vector<Atributo>* cols = (*linhas)[r];
+            int num_cols = (int)cols->size();
+            buffer_codigo.push_back(simb_inserido.nome_c + "[" + std::to_string(r) + "] = malloc(" + std::to_string(num_cols) + " * sizeof(" + tipoParaString(t) + "));");
+            for (int c = 0; c < num_cols; ++c) {
+                if (t != (Tipo)(*cols)[c].tipo) {
+                    yyerror("Erro Semantico: Tipo de valor invalido na inicializacao da matriz irregular.");
+                    exit(1);
+                }
+                buffer_codigo.push_back(simb_inserido.nome_c + "[" + std::to_string(r) + "][" + std::to_string(c) + "] = " + (*cols)[c].nome + ";");
+            }
+            delete cols;
+        }
+        // Linhas não inicializadas ficam como NULL
+        delete linhas;
+    }
     /* Atribuicao padrao */
     | lvalue ATRIB expressao ';' {
         std::string lval_nome($1.nome);

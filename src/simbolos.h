@@ -28,6 +28,7 @@ struct Simbolo {
     Tipo tipo = Tipo::DESCONHECIDO;
     bool eh_vetor = false;
     bool eh_matriz = false;
+    bool eh_jagged = false;
     int dim1 = 0;
     int dim2 = 0;
     

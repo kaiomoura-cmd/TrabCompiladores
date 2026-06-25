@@ -6,7 +6,7 @@ string s1;
 string s2;
 
 /* Atribuição direta de literal string */
-s1 = "Ola";
+s1 = "Ola ";
 s2 = "Mundo";
 
 /* Concatenação */
