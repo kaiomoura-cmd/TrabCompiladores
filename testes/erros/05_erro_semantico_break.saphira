@@ -1,4 +1,4 @@
-/* TESTE 12 (ERRO SEMÂNTICO) - Controle de Fluxo Inválido
+/* TESTE 05 (ERRO SEMÂNTICO) - Controle de Fluxo Inválido (Antigo Teste 12)
    Tenta usar um break fora de qualquer laço (while/for) ou switch. */
 
 int a = 5;

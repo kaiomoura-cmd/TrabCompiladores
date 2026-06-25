@@ -1,0 +1,3 @@
+/* TESTE ERRO SINTÁTICO - Falta de ponto e vírgula */
+int x = 10
+write(x);

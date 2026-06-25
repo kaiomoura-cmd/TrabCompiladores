@@ -26,7 +26,6 @@ const std::vector<std::string> &GeradorDeTemporarios::getTemporarios() const {
 }
 
 void GeradorDeTemporarios::reiniciar() {
-  contador = 0;
   temporarios.clear();
 }
 
@@ -42,13 +41,10 @@ void DeclaracaoDeMemoria::imprimirDeclaracoes(
   std::unordered_map<std::string, std::vector<std::string>> porTipo;
 
   for (const auto &temp : temporarios) {
-    Tipo t = tipoPadrao;
-
-    // Se o temporário existir na tabela de símbolos, usa o tipo de lá
-    if (tabela.existe(temp)) {
-      t = tabela.buscar(temp);
+    if (tabela.existePorNomeC(temp)) {
+      continue;
     }
-
+    Tipo t = tipoPadrao;
     porTipo[tipoParaString(t)].push_back(temp);
   }
 

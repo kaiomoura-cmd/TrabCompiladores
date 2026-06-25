@@ -1,0 +1,8 @@
+/* TESTE ETAPA 3 - Enumerações */
+enum Cor { VERMELHO, VERDE, AZUL };
+
+Cor c1 = VERDE;
+Cor c2 = AZUL;
+
+write("c1: %i \n", (int)c1); // 1
+write("c2: %i \n", (int)c2); // 2

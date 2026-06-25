@@ -45,6 +45,20 @@ std::string nome_funcao_atual = "";
 Tipo tipo_retorno_atual = Tipo::VOID;
 std::string params_c_atual = "";
 
+// ─── Flag de erro global ─────────────────────────────────────────────────────
+// Qualquer erro (sintático ou semântico) marca esta flag.
+// O main() checa antes de emitir o código C — se houve erro, não emite nada.
+bool houve_erro = false;
+std::string nome_arquivo_atual = "";
+
+// ─── Cores ANSI para mensagens de erro no stderr ─────────────────────────────
+static const char* COR_RESET   = "\033[0m";
+static const char* COR_NEGRITO = "\033[1m";
+static const char* COR_VERM    = "\033[1;31m";  // vermelho negrito (erro)
+static const char* COR_AMAR    = "\033[1;33m";  // amarelo (detalhe)
+static const char* COR_CIANO   = "\033[1;36m";  // ciano (info)
+
+
 // ─── Gerador de Labels (L1, L2, L3, ...) ──────────────────────────────────
 static int contador_labels = 0;
 std::string novoLabel() {
@@ -53,13 +67,21 @@ std::string novoLabel() {
 
 // ─── Contador de profundidade de laço (para validar break/continue) ────────
 static int nivel_laco = 0;
+static int nivel_loop_puro = 0; // conta apenas while/for (não switch) — usado pelo continue
 
 std::vector<std::string> pilha_labels_fim;   
 std::vector<std::string> pilha_labels_ini;   
 std::vector<std::string> pilha_laco_fim;   
 std::vector<std::string> pilha_laco_ini;   
 
-std::vector<std::string> buffer_incr_for;
+// Pilha de buffers de incremento do for (suporta for aninhados)
+std::vector<std::vector<std::string>> pilha_incr_for;
+
+// Suporte ao switch/case — pilhas para switches aninhados
+std::vector<size_t>                   pilha_switch_dispatch_index;
+std::vector<std::vector<std::string>> pilha_switch_dispatch;
+std::vector<std::string>              pilha_switch_temp;
+std::vector<std::string>              pilha_switch_default_label;
 
 char* copia_string(const std::string& str) {
     char* cstr = new char[str.length() + 1];
@@ -76,6 +98,7 @@ char* copia_string(const std::string& str) {
 struct Atributo {
     char* nome;
     int tipo;
+    char* nome_orig;
 };
 
 struct Param {
@@ -90,7 +113,12 @@ Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2
 void gera_codigo_atribuicao(char* id, char* n_exp);
 Atributo gera_codigo_casting(int tipo_destino, char* n_exp);
 void faz_atribuicao(char* id, int tipo_destino, char* n_exp, int tipo_exp);
+// Gera printfs separados seguindo a diretriz de 3 endereços:
+//   "prefixo%spec sufixo" + var → printf("prefixo") + printf("%spec", var) + printf(" sufixo")
+void gera_write_formato(const std::string& formato_raw, const std::string& var_nome);
 }
+
+%define parse.error verbose
 
 %union {
     char* str;
@@ -184,7 +212,8 @@ comando:
         simb.eh_vetor = true;
         simb.dim1 = dim;
         tabela.inserirSimbolo(nome_var, simb);
-        buffer_decls.push_back(tipoParaString(t) + " " + nome_var + "[" + std::to_string(dim) + "];");
+        Simbolo simb_inserido = tabela.buscarSimbolo(nome_var);
+        buffer_decls.push_back(tipoParaString(t) + " " + simb_inserido.nome_c + "[" + std::to_string(dim) + "];");
     }
     /* Declaracao de matriz (2D) simples */
     | tipo ID '[' NUM_INTEIRO ']' '[' NUM_INTEIRO ']' ';' {
@@ -199,7 +228,8 @@ comando:
         simb.dim1 = dim1;
         simb.dim2 = dim2;
         tabela.inserirSimbolo(nome_var, simb);
-        buffer_decls.push_back(tipoParaString(t) + " " + nome_var + "[" + std::to_string(dim1) + "][" + std::to_string(dim2) + "];");
+        Simbolo simb_inserido = tabela.buscarSimbolo(nome_var);
+        buffer_decls.push_back(tipoParaString(t) + " " + simb_inserido.nome_c + "[" + std::to_string(dim1) + "][" + std::to_string(dim2) + "];");
     }
     /* Declaracao de vetor inicializado */
     | tipo ID '[' NUM_INTEIRO ']' ATRIB '{' lista_valores '}' ';' {
@@ -211,22 +241,25 @@ comando:
             yyerror("Erro Semantico: Inicializadores excedem o tamanho do vetor.");
             exit(1);
         }
-        std::string init_str = "";
-        for (size_t i = 0; i < vals->size(); ++i) {
-            if (i > 0) init_str += ", ";
-            if (t != (Tipo)(*vals)[i].tipo) {
-                yyerror("Erro Semantico: Inicializador com tipo incompativel.");
-                exit(1);
-            }
-            init_str += (*vals)[i].nome;
-        }
         Simbolo simb;
         simb.nome = nome_var;
         simb.tipo = t;
         simb.eh_vetor = true;
         simb.dim1 = dim;
         tabela.inserirSimbolo(nome_var, simb);
-        buffer_decls.push_back(tipoParaString(t) + " " + nome_var + "[" + std::to_string(dim) + "] = {" + init_str + "};");
+        Simbolo simb_inserido = tabela.buscarSimbolo(nome_var);
+        
+        // Declaracao sem inicializacao
+        buffer_decls.push_back(tipoParaString(t) + " " + simb_inserido.nome_c + "[" + std::to_string(dim) + "];");
+        
+        // Atribuicoes atômicas elemento a elemento
+        for (size_t i = 0; i < vals->size(); ++i) {
+            if (t != (Tipo)(*vals)[i].tipo) {
+                yyerror("Erro Semantico: Inicializador com tipo incompativel.");
+                exit(1);
+            }
+            buffer_codigo.push_back(simb_inserido.nome_c + "[" + std::to_string(i) + "] = " + (*vals)[i].nome + ";");
+        }
         delete vals;
     }
     /* Declaracao de matriz inicializada */
@@ -240,26 +273,6 @@ comando:
             yyerror("Erro Semantico: Numero de linhas maior que dim1.");
             exit(1);
         }
-        std::string init_str = "";
-        for (size_t r = 0; r < linhas->size(); ++r) {
-            std::vector<Atributo>* cols = (*linhas)[r];
-            if (cols->size() > (size_t)dim2) {
-                yyerror("Erro Semantico: Numero de colunas maior que dim2.");
-                exit(1);
-            }
-            if (r > 0) init_str += ", ";
-            init_str += "{";
-            for (size_t c = 0; c < cols->size(); ++c) {
-                if (c > 0) init_str += ", ";
-                if (t != (Tipo)(*cols)[c].tipo) {
-                    yyerror("Erro Semantico: Tipo de valor invalido na inicializacao da matriz.");
-                    exit(1);
-                }
-                init_str += (*cols)[c].nome;
-            }
-            init_str += "}";
-            delete cols;
-        }
         Simbolo simb;
         simb.nome = nome_var;
         simb.tipo = t;
@@ -267,7 +280,27 @@ comando:
         simb.dim1 = dim1;
         simb.dim2 = dim2;
         tabela.inserirSimbolo(nome_var, simb);
-        buffer_decls.push_back(tipoParaString(t) + " " + nome_var + "[" + std::to_string(dim1) + "][" + std::to_string(dim2) + "] = {" + init_str + "};");
+        Simbolo simb_inserido = tabela.buscarSimbolo(nome_var);
+        
+        // Declaracao sem inicializacao
+        buffer_decls.push_back(tipoParaString(t) + " " + simb_inserido.nome_c + "[" + std::to_string(dim1) + "][" + std::to_string(dim2) + "];");
+        
+        // Atribuicoes atômicas celula a celula
+        for (size_t r = 0; r < linhas->size(); ++r) {
+            std::vector<Atributo>* cols = (*linhas)[r];
+            if (cols->size() > (size_t)dim2) {
+                yyerror("Erro Semantico: Numero de colunas maior que dim2.");
+                exit(1);
+            }
+            for (size_t c = 0; c < cols->size(); ++c) {
+                if (t != (Tipo)(*cols)[c].tipo) {
+                    yyerror("Erro Semantico: Tipo de valor invalido na inicializacao da matriz.");
+                    exit(1);
+                }
+                buffer_codigo.push_back(simb_inserido.nome_c + "[" + std::to_string(r) + "][" + std::to_string(c) + "] = " + (*cols)[c].nome + ";");
+            }
+            delete cols;
+        }
         delete linhas;
     }
     /* Atribuicao padrao */
@@ -276,7 +309,8 @@ comando:
         int tipo_dest = $1.tipo;
         if (tipo_dest == $3.tipo) {
             if (tipo_dest == 4) {
-                buffer_codigo.push_back("strcpy(" + lval_nome + ", " + std::string($3.nome) + ");");
+                buffer_codigo.push_back("free(" + lval_nome + ");");
+                buffer_codigo.push_back(lval_nome + " = strdup(" + std::string($3.nome) + ");");
             } else {
                 buffer_codigo.push_back(lval_nome + " = " + std::string($3.nome) + ";");
             }
@@ -291,8 +325,8 @@ comando:
     }
     /* Atribuicao de Slice */
     | lvalue ATRIB ID '[' expressao ':' expressao ']' ';' {
-        std::string dest($1.nome);
-        std::string src($3);
+        std::string dest($1.nome); // nome_c
+        std::string src($3); // nome original
         if (!tabela.existe(src)) {
             yyerror("Erro Semantico: Vetor nao encontrado.");
             exit(1);
@@ -302,10 +336,8 @@ comando:
             yyerror("Erro Semantico: Slice exige vetor de origem.");
             exit(1);
         }
-        std::string dest_var = dest;
-        size_t brk = dest_var.find('[');
-        if (brk != std::string::npos) dest_var = dest_var.substr(0, brk);
-        Simbolo simb_dest = tabela.buscarSimbolo(dest_var);
+        std::string dest_orig($1.nome_orig); // nome original
+        Simbolo simb_dest = tabela.buscarSimbolo(dest_orig);
         if (!simb_dest.eh_vetor) {
             yyerror("Erro Semantico: Atribuicao de slice exige vetor de destino.");
             exit(1);
@@ -322,7 +354,7 @@ comando:
         std::string t_lim = gerador.novoTemporario();
         buffer_codigo.push_back(t_lim + " = " + std::string($7.nome) + " - " + std::string($5.nome) + ";");
         buffer_codigo.push_back("for (int " + t_sl + " = 0; " + t_sl + " < " + t_lim + "; " + t_sl + "++) {");
-        buffer_codigo.push_back("    " + dest_var + "[" + t_sl + "] = " + src + "[" + std::string($5.nome) + " + " + t_sl + "];");
+        buffer_codigo.push_back("    " + dest + "[" + t_sl + "] = " + simb_src.nome_c + "[" + std::string($5.nome) + " + " + t_sl + "];");
         buffer_codigo.push_back("}");
     }
     /* Operadores compostos */
@@ -417,7 +449,19 @@ comando:
                 fmt = "%s";
             }
             if (tipo_real == Tipo::STRING) {
-                buffer_codigo.push_back("scanf(\"" + fmt + "\", " + nome_str + ");");
+                bool declared = false;
+                for (const auto& decl : buffer_decls) {
+                    if (decl.find("t_read_buf") != std::string::npos) {
+                        declared = true;
+                        break;
+                    }
+                }
+                if (!declared) {
+                    buffer_decls.push_back("char t_read_buf[1024];");
+                }
+                buffer_codigo.push_back("scanf(\"" + fmt + "\", t_read_buf);");
+                buffer_codigo.push_back("free(" + nome_str + ");");
+                buffer_codigo.push_back(nome_str + " = strdup(t_read_buf);");
             } else {
                 buffer_codigo.push_back("scanf(\"" + extra_space + fmt + "\", &" + nome_str + ");");
             }
@@ -432,6 +476,19 @@ comando:
                 fmt = "%s\\n";
             }
             buffer_codigo.push_back("printf(\"" + fmt + "\", " + std::string($3.nome) + ");");
+        }
+    /* write com formato customizado: write("prefixo %spec sufixo", expr)
+       Gera printfs separados (3-address code):
+         printf("prefixo");          ← literal puro, sem variável
+         printf("%spec", var);       ← endereço da variável
+         printf(" sufixo");          ← literal puro, sem variável              */
+    | WRITE ABRE_PAR LITERAL_STRING ',' expressao FECHA_PAR ';' {
+            std::string formato($3);
+            // Remove as aspas externas do literal (ex: "\"hello\"" → "hello")
+            if (formato.size() >= 2 && formato.front() == '"' && formato.back() == '"') {
+                formato = formato.substr(1, formato.size() - 2);
+            }
+            gera_write_formato(formato, std::string($5.nome));
         }
     /* Escrita de Slices */
     | WRITE ABRE_PAR ID '[' expressao ':' expressao ']' FECHA_PAR ';' {
@@ -456,11 +513,11 @@ comando:
         buffer_codigo.push_back("for (int " + t_sl + " = 0; " + t_sl + " < " + t_lim + "; " + t_sl + "++) {");
         buffer_codigo.push_back("    if (" + t_sl + " > 0) printf(\", \");");
         if (simb.tipo == Tipo::INT) {
-            buffer_codigo.push_back("    printf(\"%d\", " + src + "[" + std::string($5.nome) + " + " + t_sl + "]);");
+            buffer_codigo.push_back("    printf(\"%d\", " + simb.nome_c + "[" + std::string($5.nome) + " + " + t_sl + "]);");
         } else if (simb.tipo == Tipo::FLOAT) {
-            buffer_codigo.push_back("    printf(\"%f\", " + src + "[" + std::string($5.nome) + " + " + t_sl + "]);");
+            buffer_codigo.push_back("    printf(\"%f\", " + simb.nome_c + "[" + std::string($5.nome) + " + " + t_sl + "]);");
         } else if (simb.tipo == Tipo::CHAR) {
-            buffer_codigo.push_back("    printf(\"%c\", " + src + "[" + std::string($5.nome) + " + " + t_sl + "]);");
+            buffer_codigo.push_back("    printf(\"%c\", " + simb.nome_c + "[" + std::string($5.nome) + " + " + t_sl + "]);");
         }
         buffer_codigo.push_back("}");
         buffer_codigo.push_back("printf(\"]\\n\");");
@@ -478,11 +535,11 @@ comando:
             buffer_codigo.push_back("goto " + pilha_laco_fim.back() + ";");
         }
     | CONTINUE ';' {
-            if (nivel_laco == 0) {
-                yyerror("Erro Semantico: 'continue' usado fora de um laco.");
+            if (nivel_loop_puro == 0) {
+                yyerror("Erro Semantico: 'continue' usado fora de um laco (nao e valido dentro de switch).");
                 exit(1);
             }
-            /* Usa a pilha EXCLUSIVA de laços — ignora labels de if aninhados */
+            /* Usa a pilha EXCLUSIVA de laços — ignora labels de if e switch aninhados */
             buffer_codigo.push_back("goto " + pilha_laco_ini.back() + ";");
         }
     | expressao ';' 
@@ -493,10 +550,8 @@ comando:
 bloco:
       '{' { 
           tabela.entrarEscopo(); 
-          buffer_codigo.push_back("{"); // Abre escopo no C
         } comandos_bloco '}' { 
           tabela.sairEscopo(); 
-          buffer_codigo.push_back("}"); // Fecha escopo no C
         }
     ;
 
@@ -597,8 +652,10 @@ cmd_while:
         pilha_laco_fim.push_back(l_fim);
         pilha_laco_ini.push_back(pilha_labels_ini.back());
         nivel_laco++;
+        nivel_loop_puro++;
     } comando {
         nivel_laco--;
+        nivel_loop_puro--;
         std::string l_fim = pilha_laco_fim.back(); pilha_laco_fim.pop_back();
         pilha_laco_ini.pop_back();
         std::string l_ini = pilha_labels_ini.back(); pilha_labels_ini.pop_back();
@@ -635,34 +692,37 @@ label_for_inicio:
     ;
 
 cmd_for:
-    FOR ABRE_PAR init_for ';' label_for_inicio expressao ';' {
+    FOR ABRE_PAR { tabela.entrarEscopo(); } init_for ';' label_for_inicio expressao ';' {
         // ── Verificação Semântica: condição deve ser bool (tipo 2) ──
-        if ($6.tipo != 2) {
+        // Nota: com a mid-rule action { entrarEscopo() } em $3, expressao passa a ser $7
+        if ($7.tipo != 2) {
             yyerror("Erro Semantico: A condicao do 'for' deve ser do tipo bool.");
             exit(1);
         }
         std::string l_fim = novoLabel();
-        buffer_codigo.push_back("if (!(" + std::string($6.nome) + ")) goto " + l_fim + ";");
+        buffer_codigo.push_back("if (!(" + std::string($7.nome) + ")) goto " + l_fim + ";");
         // Empilha nas pilhas DE LAÇO (usadas por break/continue)
         pilha_laco_fim.push_back(l_fim);
         pilha_laco_ini.push_back(pilha_labels_ini.back());
-        // O incremento vai ser parseado agora mas emitido depois do corpo
-        // Usamos um índice para saber onde o buffer de incr começa
-        buffer_incr_for.clear();
+        // Empilha um buffer de incremento exclusivo para este for (suporta for aninhados)
+        pilha_incr_for.push_back(std::vector<std::string>());
     } incr_for FECHA_PAR {
         nivel_laco++;
+        nivel_loop_puro++;
     } comando {
         nivel_laco--;
-        // Emite o incremento (que foi capturado separadamente) após o corpo
-        for (const auto& linha : buffer_incr_for) {
+        nivel_loop_puro--;
+        // Emite o incremento (capturado no buffer deste for) após o corpo
+        for (const auto& linha : pilha_incr_for.back()) {
             buffer_codigo.push_back(linha);
         }
-        buffer_incr_for.clear();
+        pilha_incr_for.pop_back();
         std::string l_fim = pilha_laco_fim.back(); pilha_laco_fim.pop_back();
         pilha_laco_ini.pop_back();
         std::string l_ini = pilha_labels_ini.back(); pilha_labels_ini.pop_back();
         buffer_codigo.push_back("goto " + l_ini + ";");
         buffer_codigo.push_back(l_fim + ":");
+        tabela.sairEscopo();
     }
     ;
 
@@ -677,12 +737,13 @@ init_for:
             exit(1);
         }
         Tipo tipo_real = tabela.buscar(nome_str);
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
         int tipo_destino = -1;
         if (tipo_real == Tipo::INT)   tipo_destino = 0;
         else if (tipo_real == Tipo::FLOAT) tipo_destino = 1;
         else if (tipo_real == Tipo::BOOL)  tipo_destino = 2;
         else if (tipo_real == Tipo::CHAR)  tipo_destino = 3;
-        faz_atribuicao($1, tipo_destino, $3.nome, $3.tipo);
+        faz_atribuicao(const_cast<char*>(simb.nome_c.c_str()), tipo_destino, $3.nome, $3.tipo);
     }
     /* Fix 2: for com declaracao inline — for(int i = 0; ...) */
     | T_INT ID ATRIB expressao {
@@ -691,18 +752,20 @@ init_for:
             exit(1);
         }
         tabela.inserir(std::string($2), Tipo::INT);
-        buffer_decls.push_back("int " + std::string($2) + ";");
-        buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
+        Simbolo simb = tabela.buscarSimbolo(std::string($2));
+        buffer_decls.push_back("int " + simb.nome_c + ";");
+        buffer_codigo.push_back(simb.nome_c + " = " + std::string($4.nome) + ";");
     }
     | T_FLOAT ID ATRIB expressao {
         tabela.inserir(std::string($2), Tipo::FLOAT);
-        buffer_decls.push_back("float " + std::string($2) + ";");
+        Simbolo simb = tabela.buscarSimbolo(std::string($2));
+        buffer_decls.push_back("float " + simb.nome_c + ";");
         if ($4.tipo == 1) {
-            buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
+            buffer_codigo.push_back(simb.nome_c + " = " + std::string($4.nome) + ";");
         } else if ($4.tipo == 0) {
             std::string t_conv = gerador.novoTemporario();
             buffer_codigo.push_back(t_conv + " = (float) " + std::string($4.nome) + ";");
-            buffer_codigo.push_back(std::string($2) + " = " + t_conv + ";");
+            buffer_codigo.push_back(simb.nome_c + " = " + t_conv + ";");
         } else {
             yyerror("Erro Semantico: Tipo incompativel na declaracao float do 'for'.");
             exit(1);
@@ -714,8 +777,9 @@ init_for:
             exit(1);
         }
         tabela.inserir(std::string($2), Tipo::BOOL);
-        buffer_decls.push_back("int " + std::string($2) + "; /* bool */");
-        buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
+        Simbolo simb = tabela.buscarSimbolo(std::string($2));
+        buffer_decls.push_back("int " + simb.nome_c + "; /* bool */");
+        buffer_codigo.push_back(simb.nome_c + " = " + std::string($4.nome) + ";");
     }
     | T_CHAR ID ATRIB expressao {
         if ($4.tipo != 3) {
@@ -723,8 +787,9 @@ init_for:
             exit(1);
         }
         tabela.inserir(std::string($2), Tipo::CHAR);
-        buffer_decls.push_back("char " + std::string($2) + ";");
-        buffer_codigo.push_back(std::string($2) + " = " + std::string($4.nome) + ";");
+        Simbolo simb = tabela.buscarSimbolo(std::string($2));
+        buffer_decls.push_back("char " + simb.nome_c + ";");
+        buffer_codigo.push_back(simb.nome_c + " = " + std::string($4.nome) + ";");
     }
     ;
 
@@ -738,23 +803,115 @@ incr_for:
             exit(1);
         }
         Tipo tipo_real = tabela.buscar(nome_str);
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
         int tipo_destino = -1;
         if (tipo_real == Tipo::INT)   tipo_destino = 0;
         else if (tipo_real == Tipo::FLOAT) tipo_destino = 1;
         else if (tipo_real == Tipo::BOOL)  tipo_destino = 2;
         else if (tipo_real == Tipo::CHAR)  tipo_destino = 3;
-        // Redireciona para buffer_incr_for (será emitido DEPOIS do corpo)
+        // Redireciona para pilha_incr_for.back() — suporta for aninhados
         if (tipo_destino == $3.tipo) {
-            buffer_incr_for.push_back(std::string($1) + " = " + std::string($3.nome) + ";");
+            pilha_incr_for.back().push_back(simb.nome_c + " = " + std::string($3.nome) + ";");
         } else if (tipo_destino == 1 && $3.tipo == 0) {
             std::string t_conv = gerador.novoTemporario();
-            buffer_incr_for.push_back(t_conv + " = (float) " + std::string($3.nome) + ";");
-            buffer_incr_for.push_back(std::string($1) + " = " + t_conv + ";");
+            pilha_incr_for.back().push_back(t_conv + " = (float) " + std::string($3.nome) + ";");
+            pilha_incr_for.back().push_back(simb.nome_c + " = " + t_conv + ";");
         } else {
             std::string msg = "Erro Semantico: Tipos incompativeis no incremento do 'for'.";
             yyerror(msg.c_str());
             exit(1);
         }
+    }
+    /* Operadores unarios pos-fixados: i++, i-- */
+    | ID INC {
+        std::string nome_str($1);
+        if (!tabela.existe(nome_str)) {
+            std::string msg = "Erro Semantico: Variavel nao declarada: " + nome_str;
+            yyerror(msg.c_str());
+            exit(1);
+        }
+        Tipo tipo_real = tabela.buscar(nome_str);
+        if (tipo_real != Tipo::INT && tipo_real != Tipo::FLOAT) {
+            yyerror("Erro Semantico: Incremento invalido para este tipo.");
+            exit(1);
+        }
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
+        pilha_incr_for.back().push_back(simb.nome_c + "++;");
+    }
+    | ID DEC {
+        std::string nome_str($1);
+        if (!tabela.existe(nome_str)) {
+            std::string msg = "Erro Semantico: Variavel nao declarada: " + nome_str;
+            yyerror(msg.c_str());
+            exit(1);
+        }
+        Tipo tipo_real = tabela.buscar(nome_str);
+        if (tipo_real != Tipo::INT && tipo_real != Tipo::FLOAT) {
+            yyerror("Erro Semantico: Decremento invalido para este tipo.");
+            exit(1);
+        }
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
+        pilha_incr_for.back().push_back(simb.nome_c + "--;");
+    }
+    /* Operadores unarios pre-fixados: ++i, --i */
+    | INC ID {
+        std::string nome_str($2);
+        if (!tabela.existe(nome_str)) {
+            std::string msg = "Erro Semantico: Variavel nao declarada: " + nome_str;
+            yyerror(msg.c_str());
+            exit(1);
+        }
+        Tipo tipo_real = tabela.buscar(nome_str);
+        if (tipo_real != Tipo::INT && tipo_real != Tipo::FLOAT) {
+            yyerror("Erro Semantico: Incremento invalido para este tipo.");
+            exit(1);
+        }
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
+        pilha_incr_for.back().push_back("++" + simb.nome_c + ";");
+    }
+    | DEC ID {
+        std::string nome_str($2);
+        if (!tabela.existe(nome_str)) {
+            std::string msg = "Erro Semantico: Variavel nao declarada: " + nome_str;
+            yyerror(msg.c_str());
+            exit(1);
+        }
+        Tipo tipo_real = tabela.buscar(nome_str);
+        if (tipo_real != Tipo::INT && tipo_real != Tipo::FLOAT) {
+            yyerror("Erro Semantico: Decremento invalido para este tipo.");
+            exit(1);
+        }
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
+        pilha_incr_for.back().push_back("--" + simb.nome_c + ";");
+    }
+    /* Operadores compostos: i+=expr, i-=expr, i*=expr, i/=expr */
+    | ID MAIS_ATRIB expressao {
+        std::string nome_str($1);
+        if (!tabela.existe(nome_str)) { yyerror(("Erro Semantico: Variavel nao declarada: " + nome_str).c_str()); exit(1); }
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
+        Atributo res = gera_codigo_operacao(const_cast<char*>(simb.nome_c.c_str()), (int)simb.tipo, "+", $3.nome, $3.tipo);
+        pilha_incr_for.back().push_back(simb.nome_c + " = " + std::string(res.nome) + ";");
+    }
+    | ID MENOS_ATRIB expressao {
+        std::string nome_str($1);
+        if (!tabela.existe(nome_str)) { yyerror(("Erro Semantico: Variavel nao declarada: " + nome_str).c_str()); exit(1); }
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
+        Atributo res = gera_codigo_operacao(const_cast<char*>(simb.nome_c.c_str()), (int)simb.tipo, "-", $3.nome, $3.tipo);
+        pilha_incr_for.back().push_back(simb.nome_c + " = " + std::string(res.nome) + ";");
+    }
+    | ID MULT_ATRIB expressao {
+        std::string nome_str($1);
+        if (!tabela.existe(nome_str)) { yyerror(("Erro Semantico: Variavel nao declarada: " + nome_str).c_str()); exit(1); }
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
+        Atributo res = gera_codigo_operacao(const_cast<char*>(simb.nome_c.c_str()), (int)simb.tipo, "*", $3.nome, $3.tipo);
+        pilha_incr_for.back().push_back(simb.nome_c + " = " + std::string(res.nome) + ";");
+    }
+    | ID DIV_ATRIB expressao {
+        std::string nome_str($1);
+        if (!tabela.existe(nome_str)) { yyerror(("Erro Semantico: Variavel nao declarada: " + nome_str).c_str()); exit(1); }
+        Simbolo simb = tabela.buscarSimbolo(nome_str);
+        Atributo res = gera_codigo_operacao(const_cast<char*>(simb.nome_c.c_str()), (int)simb.tipo, "/", $3.nome, $3.tipo);
+        pilha_incr_for.back().push_back(simb.nome_c + " = " + std::string(res.nome) + ";");
     }
     ;
 
@@ -775,16 +932,48 @@ incr_for:
 */
 cmd_switch:
     SWITCH ABRE_PAR expressao FECHA_PAR '{' {
-        std::string l_switch_fim = "L_switch_fim_" + std::to_string(contador_labels + 1);
-        pilha_laco_fim.push_back(l_switch_fim);
-        // switch não tem continue, mas empilhamos string vazia para manter
-        // a pilha simétrica (pop no fechamento)
+        /* ── Estratégia de geração para switch ────────────────────────────────
+           1. Avaliar a expressão em temporário t_sw
+           2. Salvar o índice atual do buffer (dispatch será inserido aqui depois)
+           3. Cada case adiciona "if (t_sw==val) goto L;" ao buffer de dispatch
+              e emite seu corpo normalmente
+           4. Ao fechar: inserir o bloco de dispatch no índice salvo via insert()
+           Suporta switch aninhado via pilhas.
+           ─────────────────────────────────────────────────────────────────── */
+        std::string t_sw = gerador.novoTemporario();
+        buffer_codigo.push_back(t_sw + " = " + std::string($3.nome) + ";");
+        pilha_switch_temp.push_back(t_sw);
+        // Salva posição no buffer APÓS a atribuição do temporário
+        pilha_switch_dispatch_index.push_back(buffer_codigo.size());
+        pilha_switch_dispatch.push_back(std::vector<std::string>());
+        pilha_switch_default_label.push_back(""); // preenchido se houver default
+
+        std::string l_fim = novoLabel();
+        pilha_laco_fim.push_back(l_fim);
+        // switch não tem continue — empilhamos string vazia para manter pilha simétrica
+        // continue dentro de switch é bloqueado por nivel_loop_puro
         pilha_laco_ini.push_back("");
         nivel_laco++;
     } lista_cases '}' {
         nivel_laco--;
         std::string l_fim = pilha_laco_fim.back(); pilha_laco_fim.pop_back();
         pilha_laco_ini.pop_back();
+
+        // Recupera dados do switch atual
+        size_t idx                    = pilha_switch_dispatch_index.back(); pilha_switch_dispatch_index.pop_back();
+        std::vector<std::string> disp = pilha_switch_dispatch.back();       pilha_switch_dispatch.pop_back();
+        std::string def_lbl           = pilha_switch_default_label.back();  pilha_switch_default_label.pop_back();
+        pilha_switch_temp.pop_back();
+
+        // goto de fallthrough: vai para default (se houver) ou direto ao fim
+        std::string goto_ft = def_lbl.empty()
+            ? ("goto " + l_fim + ";")
+            : ("goto " + def_lbl + ";");
+        disp.push_back(goto_ft);
+
+        // Insere o bloco de dispatch no índice reservado (antes dos corpos dos cases)
+        buffer_codigo.insert(buffer_codigo.begin() + idx, disp.begin(), disp.end());
+
         buffer_codigo.push_back(l_fim + ":");
     }
     ;
@@ -797,9 +986,13 @@ lista_cases:
 
 cmd_case:
     CASE expressao ':' {
-        /* Cada case gera um label próprio e salta para ele se a expressão bater */
+        std::string t_sw  = pilha_switch_temp.back();
         std::string l_case = novoLabel();
-        buffer_codigo.push_back("/* case: goto " + l_case + " se match */");
+        // Adiciona comparação ao buffer de dispatch do switch atual
+        pilha_switch_dispatch.back().push_back(
+            "if (" + t_sw + " == " + std::string($2.nome) + ") goto " + l_case + ";"
+        );
+        // Emite o label do case no fluxo normal do código
         buffer_codigo.push_back(l_case + ":");
     } comandos_bloco
     ;
@@ -807,6 +1000,8 @@ cmd_case:
 cmd_default:
     DEFAULT ':' {
         std::string l_def = novoLabel();
+        // Registra label do default para o switch usar no goto de fallthrough
+        pilha_switch_default_label.back() = l_def;
         buffer_codigo.push_back(l_def + ":");
     } comandos_bloco
     ;
@@ -814,14 +1009,16 @@ cmd_default:
 lvalue:
       ID {
         std::string nome_str($1);
-        $$.nome = copia_string(nome_str);
         if (tabela.existe(nome_str)) {
             Simbolo simb = tabela.buscarSimbolo(nome_str);
             if (simb.eh_enum_const) {
                 $$.nome = copia_string(std::to_string(simb.valor_enum));
                 $$.tipo = 0;
+                $$.nome_orig = copia_string("");
             } else {
+                $$.nome = copia_string(simb.nome_c);
                 $$.tipo = (int)simb.tipo;
+                $$.nome_orig = copia_string(nome_str);
             }
         } else {
             std::string msg = "Erro Semantico: Variavel nao declarada: " + nome_str;
@@ -841,7 +1038,8 @@ lvalue:
             exit(1);
         }
         $$.tipo = (int)simb.tipo;
-        $$.nome = copia_string(nome_str + "[" + std::string($3.nome) + "]");
+        $$.nome = copia_string(simb.nome_c + "[" + std::string($3.nome) + "]");
+        $$.nome_orig = copia_string(nome_str);
       }
     | ID '[' expressao ']' '[' expressao ']' {
         std::string nome_str($1);
@@ -855,7 +1053,8 @@ lvalue:
             exit(1);
         }
         $$.tipo = (int)simb.tipo;
-        $$.nome = copia_string(nome_str + "[" + std::string($3.nome) + "][" + std::string($6.nome) + "]");
+        $$.nome = copia_string(simb.nome_c + "[" + std::string($3.nome) + "][" + std::string($6.nome) + "]");
+        $$.nome_orig = copia_string(nome_str);
       }
     ;
 
@@ -899,41 +1098,44 @@ declaracao_item:
       ID {
         Tipo t = tipo_declaracao_atual;
         tabela.inserir(std::string($1), t);
+        Simbolo simb = tabela.buscarSimbolo(std::string($1));
         if (t == Tipo::STRING) {
-            buffer_decls.push_back("char " + std::string($1) + "[256]; /* string */");
+            buffer_decls.push_back("char* " + simb.nome_c + " = NULL;");
+            buffer_codigo.push_back(simb.nome_c + " = strdup(\"\");");
         } else if (t == Tipo::BOOL) {
-            buffer_decls.push_back("int " + std::string($1) + "; /* bool */");
+            buffer_decls.push_back("int " + simb.nome_c + "; /* bool */");
         } else {
-            buffer_decls.push_back(tipoParaString(t) + " " + std::string($1) + ";");
+            buffer_decls.push_back(tipoParaString(t) + " " + simb.nome_c + ";");
         }
       }
     | ID ATRIB expressao {
         Tipo t = tipo_declaracao_atual;
         tabela.inserir(std::string($1), t);
+        Simbolo simb = tabela.buscarSimbolo(std::string($1));
         if (t == Tipo::STRING) {
-            buffer_decls.push_back("char " + std::string($1) + "[256]; /* string */");
+            buffer_decls.push_back("char* " + simb.nome_c + " = NULL;");
             if ($3.tipo == 4) {
-                buffer_codigo.push_back("strcpy(" + std::string($1) + ", " + std::string($3.nome) + ");");
+                buffer_codigo.push_back(simb.nome_c + " = strdup(" + std::string($3.nome) + ");");
             } else {
                 yyerror("Erro Semantico: Tipo incompativel para string.");
                 exit(1);
             }
         } else if (t == Tipo::BOOL) {
-            buffer_decls.push_back("int " + std::string($1) + "; /* bool */");
+            buffer_decls.push_back("int " + simb.nome_c + "; /* bool */");
             if ($3.tipo == 2) {
-                buffer_codigo.push_back(std::string($1) + " = " + std::string($3.nome) + ";");
+                buffer_codigo.push_back(simb.nome_c + " = " + std::string($3.nome) + ";");
             } else {
                 yyerror("Erro Semantico: Tipo incompativel para bool.");
                 exit(1);
             }
         } else {
-            buffer_decls.push_back(tipoParaString(t) + " " + std::string($1) + ";");
+            buffer_decls.push_back(tipoParaString(t) + " " + simb.nome_c + ";");
             if (t == (Tipo)$3.tipo) {
-                buffer_codigo.push_back(std::string($1) + " = " + std::string($3.nome) + ";");
+                buffer_codigo.push_back(simb.nome_c + " = " + std::string($3.nome) + ";");
             } else if (t == Tipo::FLOAT && $3.tipo == 0) {
                 std::string t_conv = gerador.novoTemporario();
                 buffer_codigo.push_back(t_conv + " = (float) " + std::string($3.nome) + ";");
-                buffer_codigo.push_back(std::string($1) + " = " + t_conv + ";");
+                buffer_codigo.push_back(simb.nome_c + " = " + t_conv + ";");
             } else {
                 yyerror("Erro Semantico: Tipo incompativel na declaracao.");
                 exit(1);
@@ -986,11 +1188,12 @@ funcao_cabecalho:
         for (size_t i = 0; i < params->size(); ++i) {
             const auto& p = (*params)[i];
             tabela.inserir(p.nome, p.tipo);
+            Simbolo simb_p = tabela.buscarSimbolo(p.nome);
             if (i > 0) params_c += ", ";
             if (p.tipo == Tipo::STRING) {
-                params_c += "char* " + p.nome;
+                params_c += "char* " + simb_p.nome_c;
             } else {
-                params_c += tipoParaString(p.tipo) + " " + p.nome;
+                params_c += tipoParaString(p.tipo) + " " + simb_p.nome_c;
             }
         }
         params_c_atual = params_c;
@@ -1029,11 +1232,12 @@ funcao_cabecalho:
         for (size_t i = 0; i < params->size(); ++i) {
             const auto& p = (*params)[i];
             tabela.inserir(p.nome, p.tipo);
+            Simbolo simb_p = tabela.buscarSimbolo(p.nome);
             if (i > 0) params_c += ", ";
             if (p.tipo == Tipo::STRING) {
-                params_c += "char* " + p.nome;
+                params_c += "char* " + simb_p.nome_c;
             } else {
-                params_c += tipoParaString(p.tipo) + " " + p.nome;
+                params_c += tipoParaString(p.tipo) + " " + simb_p.nome_c;
             }
         }
         params_c_atual = params_c;
@@ -1064,20 +1268,26 @@ funcao:
         
         std::vector<std::string> temps = gerador.getTemporarios();
         if (!temps.empty()) {
-            func_code += "    /* --- declaracoes de temporarios --- */\n";
             std::unordered_map<std::string, std::vector<std::string>> porTipo;
+            bool has_temps = false;
             for (const auto& temp : temps) {
+                if (tabela.existePorNomeC(temp)) {
+                    continue;
+                }
+                has_temps = true;
                 Tipo t = Tipo::INT;
-                if (tabela.existe(temp)) t = tabela.buscar(temp);
                 porTipo[tipoParaString(t)].push_back(temp);
             }
-            for (const auto& ent : porTipo) {
-                func_code += "    " + ent.first + " ";
-                for (size_t i = 0; i < ent.second.size(); ++i) {
-                    if (i > 0) func_code += ", ";
-                    func_code += ent.second[i];
+            if (has_temps) {
+                func_code += "    /* --- declaracoes de temporarios --- */\n";
+                for (const auto& ent : porTipo) {
+                    func_code += "    " + ent.first + " ";
+                    for (size_t i = 0; i < ent.second.size(); ++i) {
+                        if (i > 0) func_code += ", ";
+                        func_code += ent.second[i];
+                    }
+                    func_code += ";\n";
                 }
-                func_code += ";\n";
             }
         }
         if (!buffer_decls_funcao.empty() || !temps.empty()) {
@@ -1142,26 +1352,32 @@ expressao:
     NUM_INTEIRO { 
         $$.nome = copia_string(std::string($1));
         $$.tipo = 0;
+        $$.nome_orig = copia_string("");
     }
     | NUM_REAL { 
         $$.nome = copia_string(std::string($1));
         $$.tipo = 1;
+        $$.nome_orig = copia_string("");
     }
     | LITERAL_CHAR { 
         $$.nome = copia_string(std::string($1));
         $$.tipo = 3;
+        $$.nome_orig = copia_string("");
     }
     | LITERAL_STRING {
         $$.nome = copia_string(std::string($1));
         $$.tipo = 4;
+        $$.nome_orig = copia_string("");
     }
     | TRUE { 
         $$.nome = copia_string("1");
         $$.tipo = 2;
+        $$.nome_orig = copia_string("");
     }
     | FALSE { 
         $$.nome = copia_string("0");
         $$.tipo = 2;
+        $$.nome_orig = copia_string("");
     }
     | lvalue { 
         $$ = $1;
@@ -1212,6 +1428,7 @@ expressao:
             buffer_codigo.push_back(nome_func + "(" + args_c + ");");
             $$.nome = copia_string("");
         }
+        $$.nome_orig = copia_string("");
         delete args;
     }
     | lvalue INC {
@@ -1224,6 +1441,7 @@ expressao:
         buffer_codigo.push_back(std::string($1.nome) + " = " + std::string($1.nome) + " + 1;");
         $$.nome = copia_string(t_res);
         $$.tipo = $1.tipo;
+        $$.nome_orig = copia_string("");
     }
     | lvalue DEC {
         if ($1.tipo != 0 && $1.tipo != 1) {
@@ -1235,6 +1453,7 @@ expressao:
         buffer_codigo.push_back(std::string($1.nome) + " = " + std::string($1.nome) + " - 1;");
         $$.nome = copia_string(t_res);
         $$.tipo = $1.tipo;
+        $$.nome_orig = copia_string("");
     }
     | INC lvalue {
         if ($2.tipo != 0 && $2.tipo != 1) {
@@ -1244,6 +1463,7 @@ expressao:
         buffer_codigo.push_back(std::string($2.nome) + " = " + std::string($2.nome) + " + 1;");
         $$.nome = copia_string(std::string($2.nome));
         $$.tipo = $2.tipo;
+        $$.nome_orig = copia_string("");
     }
     | DEC lvalue {
         if ($2.tipo != 0 && $2.tipo != 1) {
@@ -1253,19 +1473,20 @@ expressao:
         buffer_codigo.push_back(std::string($2.nome) + " = " + std::string($2.nome) + " - 1;");
         $$.nome = copia_string(std::string($2.nome));
         $$.tipo = $2.tipo;
+        $$.nome_orig = copia_string("");
     }
     /* Operações Matemáticas */
-    | expressao SOM expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "+", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; }
-    | expressao SUB expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "-", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; }
-    | expressao MULT expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "*", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; }
-    | expressao DIV expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "/", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; }
+    | expressao SOM expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "+", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; $$.nome_orig = copia_string(""); }
+    | expressao SUB expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "-", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; $$.nome_orig = copia_string(""); }
+    | expressao MULT expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "*", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; $$.nome_orig = copia_string(""); }
+    | expressao DIV expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "/", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = res.tipo; $$.nome_orig = copia_string(""); }
     /* Operações Relacionais */
-    | expressao MAIOR expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, ">", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
-    | expressao MENOR expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "<", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
-    | expressao MAIOR_IGUAL expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, ">=", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
-    | expressao MENOR_IGUAL expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "<=", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
-    | expressao IGUAL expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "==", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
-    | expressao DIFERENTE expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "!=", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; }
+    | expressao MAIOR expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, ">", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; $$.nome_orig = copia_string(""); }
+    | expressao MENOR expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "<", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; $$.nome_orig = copia_string(""); }
+    | expressao MAIOR_IGUAL expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, ">=", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; $$.nome_orig = copia_string(""); }
+    | expressao MENOR_IGUAL expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "<=", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; $$.nome_orig = copia_string(""); }
+    | expressao IGUAL expressao  { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "==", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; $$.nome_orig = copia_string(""); }
+    | expressao DIFERENTE expressao { Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "!=", $3.nome, $3.tipo); $$.nome = res.nome; $$.tipo = 2; $$.nome_orig = copia_string(""); }
     /* Operações Lógicas */
     | expressao E_LOGICO expressao { 
         if ($1.tipo != 2 || $3.tipo != 2) {
@@ -1275,6 +1496,7 @@ expressao:
         Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "&&", $3.nome, $3.tipo); 
         $$.nome = res.nome; 
         $$.tipo = 2;
+        $$.nome_orig = copia_string("");
     }
     | expressao OU_LOGICO expressao { 
         if ($1.tipo != 2 || $3.tipo != 2) {
@@ -1284,6 +1506,7 @@ expressao:
         Atributo res = gera_codigo_operacao($1.nome, $1.tipo, "||", $3.nome, $3.tipo); 
         $$.nome = res.nome; 
         $$.tipo = 2;
+        $$.nome_orig = copia_string("");
     }
     /* Negação */
     | NEGACAO expressao {
@@ -1294,6 +1517,7 @@ expressao:
         std::string t_res = gerador.novoTemporario();
         $$.nome = copia_string(t_res);
         $$.tipo = 2;
+        $$.nome_orig = copia_string("");
         buffer_codigo.push_back(t_res + " = !" + std::string($2.nome) + ";");
     }
     /* Menos Unário */
@@ -1305,15 +1529,96 @@ expressao:
         std::string t_res = gerador.novoTemporario();
         $$.nome = copia_string(t_res);
         $$.tipo = $2.tipo;
+        $$.nome_orig = copia_string("");
         buffer_codigo.push_back(t_res + " = -" + std::string($2.nome) + ";");
     }
     /* Casting e Parênteses */
-    | ABRE_PAR T_INT FECHA_PAR expressao   { Atributo res = gera_codigo_casting(0, $4.nome); $$.nome = res.nome; $$.tipo = res.tipo; }
-    | ABRE_PAR T_FLOAT FECHA_PAR expressao { Atributo res = gera_codigo_casting(1, $4.nome); $$.nome = res.nome; $$.tipo = res.tipo; }
-    | ABRE_PAR expressao FECHA_PAR       { $$.nome = $2.nome; $$.tipo = $2.tipo; }
+    | ABRE_PAR T_INT FECHA_PAR expressao   { Atributo res = gera_codigo_casting(0, $4.nome); $$.nome = res.nome; $$.tipo = res.tipo; $$.nome_orig = copia_string(""); }
+    | ABRE_PAR T_FLOAT FECHA_PAR expressao { Atributo res = gera_codigo_casting(1, $4.nome); $$.nome = res.nome; $$.tipo = res.tipo; $$.nome_orig = copia_string(""); }
+    | ABRE_PAR expressao FECHA_PAR       { $$.nome = $2.nome; $$.tipo = $2.tipo; $$.nome_orig = $2.nome_orig; }
     ;
 
 %%
+
+// ─── gera_write_formato ────────────────────────────────────────────────────
+// Segue estritamente a diretriz de código de 3 endereços:
+// cada instrução de saída envolve no máximo um endereço (variável).
+//
+// Entrada:  formato_raw = string de formato sem as aspas externas (ex: "numero é: %i ")
+//           var_nome    = nome C da variável (ex: "t1")
+//
+// Saída no buffer_codigo (exemplos):
+//   printf("numero é: ");    ← instrução puramente literal (0 endereços)
+//   printf("%i ", t1);       ← instrução com 1 endereço (a variável)
+//
+// Suporta especificadores com flags/largura/precisão: %d %i %f %s %c %u %x %o %e %g
+// e também %-5d, %3.2f, etc.
+// ─────────────────────────────────────────────────────────────────────────────
+void gera_write_formato(const std::string& formato_raw, const std::string& var_nome) {
+    // Localiza o primeiro especificador de formato (%d, %i, %f, ...)
+    size_t spec_start = std::string::npos;
+    size_t spec_end   = std::string::npos;
+
+    for (size_t pos = 0; pos < formato_raw.size(); ) {
+        if (formato_raw[pos] != '%') { ++pos; continue; }
+
+        size_t s = pos;   // marca o início do possível especificador
+        ++pos;
+        if (pos >= formato_raw.size()) break;
+
+        // Flags opcionais: - + ' ' # 0
+        while (pos < formato_raw.size() &&
+               (formato_raw[pos] == '-' || formato_raw[pos] == '+' ||
+                formato_raw[pos] == ' ' || formato_raw[pos] == '#' ||
+                formato_raw[pos] == '0'))
+            ++pos;
+
+        // Largura opcional (dígitos)
+        while (pos < formato_raw.size() && std::isdigit((unsigned char)formato_raw[pos]))
+            ++pos;
+
+        // Precisão opcional (.dígitos)
+        if (pos < formato_raw.size() && formato_raw[pos] == '.') {
+            ++pos;
+            while (pos < formato_raw.size() && std::isdigit((unsigned char)formato_raw[pos]))
+                ++pos;
+        }
+
+        // Caractere de conversão
+        if (pos < formato_raw.size()) {
+            char c = formato_raw[pos];
+            if (c == 'd' || c == 'i' || c == 'f' || c == 's' || c == 'c' ||
+                c == 'u' || c == 'x' || c == 'o' || c == 'e' || c == 'g') {
+                spec_start = s;
+                spec_end   = pos;   // inclusivo
+                break;
+            }
+        }
+        // Não era um especificador válido — continua procurando
+    }
+
+    if (spec_start == std::string::npos) {
+        // Nenhum especificador encontrado: emite apenas literal
+        buffer_codigo.push_back("printf(\"" + formato_raw + "\");");
+        return;
+    }
+
+    // ── Prefixo (texto antes do especificador) ────────────────────────────
+    if (spec_start > 0) {
+        std::string prefix = formato_raw.substr(0, spec_start);
+        buffer_codigo.push_back("printf(\"" + prefix + "\");");
+    }
+
+    // ── Especificador + variável (único endereço) ─────────────────────────
+    std::string spec = formato_raw.substr(spec_start, spec_end - spec_start + 1);
+    buffer_codigo.push_back("printf(\"" + spec + "\", " + var_nome + ");");
+
+    // ── Sufixo (texto depois do especificador) ────────────────────────────
+    if (spec_end + 1 < formato_raw.size()) {
+        std::string suffix = formato_raw.substr(spec_end + 1);
+        buffer_codigo.push_back("printf(\"" + suffix + "\");");
+    }
+}
 
 Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2) {
     Atributo res;
@@ -1321,13 +1626,63 @@ Atributo gera_codigo_operacao(char* n1, int t1, const char* op, char* n2, int t2
     res.nome = copia_string(t_res);
 
     if (t1 == 4 || t2 == 4) {
-        // Única saída permitida: string + string (concatenação)
         if (t1 == 4 && t2 == 4 && std::string(op) == "+") {
-            // Concatenacao de strings: usa strcat (permitido em C--)
-            buffer_codigo.push_back("strcat(" + std::string(n1) + ", " + std::string(n2) + ");");
-            // O resultado e o proprio n1 apos concatenacao
+            std::string t_concat = gerador.novoTemporario();
+            Simbolo simb;
+            simb.nome = t_concat;
+            simb.nome_c = t_concat;
+            simb.tipo = Tipo::STRING;
+            tabela.inserirSimbolo(t_concat, simb);
+            
+            buffer_decls.push_back("char* " + t_concat + " = NULL;");
+            
+            std::string t_len1 = gerador.novoTemporario();
+            std::string t_len2 = gerador.novoTemporario();
+            std::string t_sum = gerador.novoTemporario();
+            std::string t_sum_plus = gerador.novoTemporario();
+            
+            std::string lbl_skip1 = novoLabel();
+            std::string lbl_skip2 = novoLabel();
+            
+            // Calculo do tamanho da string 1
+            buffer_codigo.push_back(t_len1 + " = 0;");
+            buffer_codigo.push_back("if (!" + std::string(n1) + ") goto " + lbl_skip1 + ";");
+            buffer_codigo.push_back(t_len1 + " = strlen(" + std::string(n1) + ");");
+            buffer_codigo.push_back(lbl_skip1 + ":");
+            
+            // Calculo do tamanho da string 2
+            buffer_codigo.push_back(t_len2 + " = 0;");
+            buffer_codigo.push_back("if (!" + std::string(n2) + ") goto " + lbl_skip2 + ";");
+            buffer_codigo.push_back(t_len2 + " = strlen(" + std::string(n2) + ");");
+            buffer_codigo.push_back(lbl_skip2 + ":");
+            
+            // Soma e incremento de 1
+            buffer_codigo.push_back(t_sum + " = " + t_len1 + " + " + t_len2 + ";");
+            buffer_codigo.push_back(t_sum_plus + " = " + t_sum + " + 1;");
+            
+            // Alocacao
+            buffer_codigo.push_back(t_concat + " = malloc(" + t_sum_plus + ");");
+            buffer_codigo.push_back(t_concat + "[0] = '\\0';");
+            
+            // Copia da primeira string
+            std::string lbl_cpy = novoLabel();
+            buffer_codigo.push_back("if (!" + std::string(n1) + ") goto " + lbl_cpy + ";");
+            buffer_codigo.push_back("strcpy(" + t_concat + ", " + std::string(n1) + ");");
+            buffer_codigo.push_back(lbl_cpy + ":");
+            
+            // Concatenação da segunda string
+            std::string lbl_cat = novoLabel();
+            buffer_codigo.push_back("if (!" + std::string(n2) + ") goto " + lbl_cat + ";");
+            buffer_codigo.push_back("strcat(" + t_concat + ", " + std::string(n2) + ");");
+            buffer_codigo.push_back(lbl_cat + ":");
+            
+            // Liberacao do buffer antigo e atualizacao
+            buffer_codigo.push_back("free(" + std::string(n1) + ");");
+            buffer_codigo.push_back(std::string(n1) + " = " + t_concat + ";");
+            
             res.nome = copia_string(std::string(n1));
             res.tipo = 4;
+            res.nome_orig = copia_string("");
             return res;
         }
         // Qualquer outra operação envolvendo string → erro semântico
@@ -1395,8 +1750,81 @@ Atributo gera_codigo_casting(int tipo_destino, char* n_exp) {
     return res;
 }
 
+static int visual_width(const std::string& str) {
+    int len = 0;
+    for (size_t i = 0; i < str.length(); ) {
+        unsigned char c = str[i];
+        if (c < 0x80) { i += 1; len += 1; }
+        else if (c < 0xC0) { i += 1; }
+        else if (c < 0xE0) { i += 2; len += 1; }
+        else if (c < 0xF0) { i += 3; len += 1; }
+        else { i += 4; len += 1; }
+    }
+    return len;
+}
+
 void yyerror(const char *s) {
-    std::cerr << "Erro na linha " << yylineno << ": " << s << std::endl;
+    houve_erro = true;
+
+    // ── Classifica o tipo de erro ─────────────────────────────────────────
+    std::string msg(s);
+    bool eh_lexico = (msg.find("Caractere inválido") != std::string::npos);
+    bool eh_sintatico = (msg.find("syntax error") != std::string::npos || 
+                         msg.find("unexpected") != std::string::npos);
+
+    // ── Cabeçalho visual ──────────────────────────────────────────────────
+    std::cerr << std::endl;
+    std::cerr << COR_VERM  << "  ╔"; for(int i=0;i<46;i++) std::cerr<<"═"; std::cerr<<"╗" << COR_RESET << std::endl;
+
+    std::string info_str;
+    if (eh_lexico) {
+        info_str = "  ⚠  ERRO LÉXICO — linha " + std::to_string(yylineno);
+    } else if (eh_sintatico) {
+        info_str = "  ⚠  ERRO SINTÁTICO — linha " + std::to_string(yylineno);
+    } else {
+        info_str = "  ✘  ERRO SEMÂNTICO — linha " + std::to_string(yylineno);
+    }
+
+    int spaces = 46 - visual_width(info_str);
+    if (spaces < 0) spaces = 0;
+
+    std::cerr << COR_VERM << "  ║" << COR_RESET
+              << COR_NEGRITO << info_str << std::string(spaces, ' ')
+              << COR_VERM << "║" << COR_RESET << std::endl;
+
+    std::cerr << COR_VERM  << "  ╚"; for(int i=0;i<46;i++) std::cerr<<"═"; std::cerr<<"╝" << COR_RESET << std::endl;
+
+    // ── Detalhe da mensagem ───────────────────────────────────────────────
+    if (eh_sintatico) {
+        // Remove o prefixo genérico "syntax error, " e exibe o resto
+        std::string detalhe = msg;
+        std::string prefixo = "syntax error, ";
+        if (detalhe.substr(0, prefixo.size()) == prefixo)
+            detalhe = detalhe.substr(prefixo.size());
+        // Capitaliza primeira letra
+        if (!detalhe.empty()) detalhe[0] = std::toupper((unsigned char)detalhe[0]);
+        std::cerr << COR_AMAR  << "  Detalhe : " << COR_RESET << detalhe << std::endl;
+    } else if (eh_lexico) {
+        std::cerr << COR_AMAR  << "  Detalhe : " << COR_RESET << msg << std::endl;
+    } else {
+        // Erros semânticos: remove o prefixo "Erro Semantico: " para não repetir
+        std::string detalhe = msg;
+        std::string prefixo = "Erro Semantico: ";
+        if (detalhe.substr(0, prefixo.size()) == prefixo)
+            detalhe = detalhe.substr(prefixo.size());
+        std::cerr << COR_AMAR  << "  Detalhe : " << COR_RESET << detalhe << std::endl;
+    }
+
+    std::cerr << COR_CIANO << "  Arquivo : " << COR_RESET;
+    // Tenta mostrar o nome do arquivo (yyin pode não estar disponível aqui,
+    // então usamos uma variável global auxiliar definida no main)
+    extern std::string nome_arquivo_atual;
+    if (!nome_arquivo_atual.empty())
+        std::cerr << nome_arquivo_atual << std::endl;
+    else
+        std::cerr << "(stdin)" << std::endl;
+
+    std::cerr << std::endl;
 }
 
 int main(int argc, char* argv[]) {
@@ -1415,10 +1843,20 @@ int main(int argc, char* argv[]) {
 
     gerador.setTabela(&tabela);
 
+    // ─── nome_arquivo_atual: exposto para yyerror() exibir na mensagem de erro
+    extern std::string nome_arquivo_atual;
+    if (argc == 2) nome_arquivo_atual = std::string(argv[1]);
+
     yyparse();
 
+    // ─── Guarda de erro: se qualquer erro ocorreu, não emite código C ────
+    if (houve_erro) {
+        return 1;
+    }
+
     std::cout << "#include <stdio.h>\n";
-    std::cout << "#include <string.h>\n\n";
+    std::cout << "#include <string.h>\n";
+    std::cout << "#include <stdlib.h>\n\n";
 
     // Imprime Enums globais
     if (!buffer_enums_global.empty()) {

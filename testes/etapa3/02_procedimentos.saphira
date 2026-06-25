@@ -1,0 +1,11 @@
+/* TESTE ETAPA 3 - Subprogramas (Procedimentos/Void) */
+void exibir_mensagem(int n) {
+    if (n > 0) {
+        write("Positivo \n");
+    } else {
+        write("Negativo ou zero \n");
+    }
+}
+
+exibir_mensagem(5);
+exibir_mensagem(-2);

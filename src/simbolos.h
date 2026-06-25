@@ -24,6 +24,7 @@ std::string tipoParaString(Tipo t);
 // Estrutura rica de símbolo
 struct Simbolo {
     std::string nome;
+    std::string nome_c; // Nome correspondente no código C intermediário
     Tipo tipo = Tipo::DESCONHECIDO;
     bool eh_vetor = false;
     bool eh_matriz = false;
@@ -57,6 +58,7 @@ public:
     Simbolo buscarSimbolo(const std::string& nome) const;
     
     bool existe(const std::string& nome) const;
+    bool existePorNomeC(const std::string& nome_c) const;
     void imprimir() const;
 
 private:

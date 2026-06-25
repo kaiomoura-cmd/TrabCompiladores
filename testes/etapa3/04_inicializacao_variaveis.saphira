@@ -1,0 +1,7 @@
+/* TESTE ETAPA 3 - Inicialização de Variáveis */
+int a = 10, b = 20, c = 30;
+float x = 1.5, y = 2.5;
+
+write("a: %i \n", a);
+write("b: %i \n", b);
+write("c: %i \n", c);

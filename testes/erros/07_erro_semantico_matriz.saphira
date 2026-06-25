@@ -1,4 +1,4 @@
-/* TESTE 15 - Erro de Dimensoes de Matriz
+/* TESTE 07 (ERRO SEMÂNTICO) - Erro de Dimensoes de Matriz (Antigo Teste 15)
    Garante que o compilador detecte acessos invalidos a matrizes. */
 
 int m[2][3];

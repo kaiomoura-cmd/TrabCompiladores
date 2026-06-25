@@ -1,0 +1,2 @@
+/* TESTE ERRO LÉXICO - Caractere inválido */
+int x = 10 @;

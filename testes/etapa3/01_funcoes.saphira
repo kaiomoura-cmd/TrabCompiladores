@@ -1,0 +1,8 @@
+/* TESTE ETAPA 3 - Funções */
+int somar(int a, int b) {
+    int res = a + b;
+    return res;
+}
+
+int x = somar(10, 20);
+write("Soma: %i \n", x);

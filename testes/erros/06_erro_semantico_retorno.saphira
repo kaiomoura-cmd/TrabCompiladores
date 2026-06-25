@@ -1,4 +1,4 @@
-/* TESTE 14 - Erro de Retorno de Função
+/* TESTE 06 (ERRO SEMÂNTICO) - Erro de Retorno de Função (Antigo Teste 14)
    Garante que o compilador detecte retornos incompativeis. */
 
 int funcao_invalida() {

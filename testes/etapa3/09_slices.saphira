@@ -1,0 +1,12 @@
+/* TESTE ETAPA 3 - Slices de Vetor */
+int v[5] = {10, 20, 30, 40, 50};
+int dest[3];
+
+dest = v[1:4]; // Copia v[1..3] (20, 30, 40) para dest[0..2]
+
+write("dest[0]: %i \n", dest[0]); // 20
+write("dest[1]: %i \n", dest[1]); // 30
+write("dest[2]: %i \n", dest[2]); // 40
+
+/* Escrita direta de slice */
+write(v[1:4]);

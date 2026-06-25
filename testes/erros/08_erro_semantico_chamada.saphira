@@ -1,4 +1,4 @@
-/* TESTE 16 - Erro de Chamada de Função
+/* TESTE 08 (ERRO SEMÂNTICO) - Erro de Chamada de Função (Antigo Teste 16)
    Garante que o compilador detecte argumentos invalidos em chamadas. */
 
 int somar(int x, int y) {

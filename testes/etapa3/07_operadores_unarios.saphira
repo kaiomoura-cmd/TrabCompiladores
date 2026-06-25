@@ -1,0 +1,14 @@
+/* TESTE ETAPA 3 - Operadores Unários */
+int x = 10;
+
+x++;
+write("x++: %i \n", x); // 11
+
+++x;
+write("++x: %i \n", x); // 12
+
+x--;
+write("x--: %i \n", x); // 11
+
+--x;
+write("--x: %i \n", x); // 10

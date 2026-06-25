@@ -1,4 +1,4 @@
-/* TESTE 10 (ERRO SEMÂNTICO) - Tipagem Incompatível
+/* TESTE 03 (ERRO SEMÂNTICO) - Tipagem Incompatível (Antigo Teste 10)
    Tenta realizar soma de bool com int. */
 
 int a = 10;

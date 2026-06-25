@@ -23,7 +23,7 @@ std::string tipoParaString(Tipo t) {
         case Tipo::FLOAT:  return "float";
         case Tipo::BOOL:   return "int";   // bool → int no código intermediário (0/1)
         case Tipo::CHAR:   return "char";
-        case Tipo::STRING: return "string";
+        case Tipo::STRING: return "char*";
         case Tipo::VOID:   return "void";
         default:           return "desconhecido";
     }
@@ -56,6 +56,12 @@ void TabelaDeSimbolos::inserir(const std::string& nome, Tipo tipo) {
     inserirSimbolo(nome, simb);
 }
 
+#include "temporarios.h"
+#include <unordered_set>
+extern GeradorDeTemporarios gerador;
+
+static std::unordered_set<std::string> variaveis_mapeadas_c;
+
 void TabelaDeSimbolos::inserirSimbolo(const std::string& nome, const Simbolo& simb) {
     // Olha APENAS para a tabela que está no topo da pilha (.back())
     if (pilha_tabelas.back().count(nome) > 0) {
@@ -63,8 +69,15 @@ void TabelaDeSimbolos::inserirSimbolo(const std::string& nome, const Simbolo& si
         yyerror(msg.c_str());
         exit(1);
     }
+    Simbolo novo_simb = simb;
+    if (!novo_simb.eh_funcao && !novo_simb.eh_enum_const) {
+        if (novo_simb.nome_c.empty()) {
+            novo_simb.nome_c = gerador.novoTemporario();
+        }
+        variaveis_mapeadas_c.insert(novo_simb.nome_c);
+    }
     // Insere o símbolo no escopo atual
-    pilha_tabelas.back()[nome] = simb;
+    pilha_tabelas.back()[nome] = novo_simb;
 }
 
 Tipo TabelaDeSimbolos::buscar(const std::string& nome) const {
@@ -93,6 +106,10 @@ bool TabelaDeSimbolos::existe(const std::string& nome) const {
         }
     }
     return false;
+}
+
+bool TabelaDeSimbolos::existePorNomeC(const std::string& nome_c) const {
+    return variaveis_mapeadas_c.count(nome_c) > 0;
 }
 
 void TabelaDeSimbolos::imprimir() const {

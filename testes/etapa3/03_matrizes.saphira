@@ -1,0 +1,12 @@
+/* TESTE ETAPA 3 - Matrizes e Vetores (Acesso e Escrita) */
+int v[3];
+int m[2][2];
+
+v[1] = 50;
+m[0][1] = 99;
+
+int val_v = v[1];
+int val_m = m[0][1];
+
+write("v[1]: %i \n", val_v);
+write("m[0][1]: %i \n", val_m);

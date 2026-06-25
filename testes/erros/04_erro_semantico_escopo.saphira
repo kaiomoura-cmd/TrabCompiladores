@@ -1,4 +1,4 @@
-/* TESTE 11 (ERRO SEMÂNTICO) - Escopo de Variável
+/* TESTE 04 (ERRO SEMÂNTICO) - Escopo de Variável (Antigo Teste 11)
    Tenta usar uma variável declarada dentro de um bloco condicional fora dele. */
 
 int a = 5;

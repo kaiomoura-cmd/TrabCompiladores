@@ -5,6 +5,9 @@
 #include "sintatico.tab.h"
 #include <string.h>
 #include <stdlib.h>
+#include <string>
+
+void yyerror(const char *s);
 
 char* copia_string_lex(const char* texto) {
     char* cstr = new char[strlen(texto) + 1];
@@ -38,7 +41,7 @@ char* copia_string_lex(const char* texto) {
 "default"              { return DEFAULT; }
 "break"                { return BREAK; }
 "continue"             { return CONTINUE; }
-\'[a-zA-Z0-9]\'        { yylval.str = copia_string_lex(yytext); return LITERAL_CHAR; }
+\'([^'\\\n]|\\.)\'     { yylval.str = copia_string_lex(yytext); return LITERAL_CHAR; }
 \"([^\"\n\\]|\\.)*\"   {yylval.str = copia_string_lex(yytext); return LITERAL_STRING;}
 [a-zA-Z_][a-zA-Z0-9_]* { yylval.str = copia_string_lex(yytext); return ID; }
 
@@ -77,6 +80,11 @@ char* copia_string_lex(const char* texto) {
 [ \t\n\r]+              {}
 "/*"([^*]|\*+[^*/])*\*+"/" {}
 "//"[^\n]*              {}
-.                       { return yytext[0]; }
+.                       {
+                            std::string msg = "Caractere inválido: '";
+                            msg += yytext[0];
+                            msg += "'";
+                            yyerror(msg.c_str());
+                        }
 
 %%

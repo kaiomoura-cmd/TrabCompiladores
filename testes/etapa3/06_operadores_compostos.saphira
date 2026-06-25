@@ -1,0 +1,14 @@
+/* TESTE ETAPA 3 - Operadores Compostos */
+int x = 10;
+
+x += 5;
+write("x += 5: %i \n", x); // 15
+
+x -= 3;
+write("x -= 3: %i \n", x); // 12
+
+x *= 2;
+write("x *= 2: %i \n", x); // 24
+
+x /= 4;
+write("x /= 4: %i \n", x); // 6
